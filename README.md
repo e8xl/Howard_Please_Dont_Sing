@@ -2,9 +2,9 @@
 8XL_kook_Music_bot\
 About KookAPP Music BOT from [khl.py](https://github.com/TWT233/khl.py)
 ***
-# 部分娱乐功能参照并修改自[Kook-Valorant-Bot](https://github.com/Valorant-Shop-CN/Kook-Valorant-Bot)
+## 部分娱乐功能参照并修改自[Kook-Valorant-Bot](https://github.com/Valorant-Shop-CN/Kook-Valorant-Bot)
 ## 功能主体来自[khl.py](https://github.com/TWT233/khl.py)
-点歌功能暂未实现 from:2023年9月18日
+### 点歌功能部分来自[kook-voice-API](https://github.com/hank9999/kook-voice-API)<br>
 #### 代码水平极差 大部分使用ChatGPT和前人的作品实现功能 轻喷
 ***
 项目名称是因为我的朋友Howard经常喜欢在打游戏的时候激情演唱他喜欢的歌曲 
