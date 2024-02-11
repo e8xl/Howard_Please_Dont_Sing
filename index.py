@@ -2,12 +2,13 @@ import json
 import logging
 import random
 import time
-from datetime import datetime, timedelta
-from funnyAPI import we, get_hitokoto
-import aiohttp
 import traceback
-from khl import Bot, Message, Cert
+from datetime import datetime, timedelta
+
+from khl import Bot, Message
 from khl.card import Card, CardMessage, Element, Module, Types
+
+from funnyAPI import we, get_hitokoto
 
 
 def open_file(path: str):
@@ -22,7 +23,7 @@ config = open_file('./config/config.json')
 # 初始化机器人
 bot = Bot(token=config['token'])  # 默认采用 websocket
 
-
+"""
 # 向botmarket通信（本地部署无需配置 无需上架botmarket）
 @bot.task.add_interval(minutes=30)
 async def botmarket():
@@ -30,6 +31,7 @@ async def botmarket():
     headers = {'uuid': 'a87ebe9c-1319-4394-9704-0ad2c70e2567'}
     async with aiohttp.ClientSession() as session:
         await session.post(api, headers=headers)
+"""
 
 
 def get_time():
@@ -121,6 +123,6 @@ async def we_command(msg: Message, city: str = "err"):
 
 # 机器人运行日志 监测运行状态
 logging.basicConfig(level='INFO')
-# everything done, go ahead now!
 print("机器人已成功启动")
+bot.command.update_prefixes("")
 bot.run()

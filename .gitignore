@@ -1,2 +1,5 @@
 config.json
 .idea
+cookie_storage
+cache/
+*.mp3
