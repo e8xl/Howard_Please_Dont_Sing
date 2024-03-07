@@ -101,13 +101,18 @@ def we_function(city):
 # 使用函数工厂创建we函数
 we = we_function("err")
 
+'''
+不稳定暂时停用
 
 # 一言API
 async def get_hitokoto():
     api_url = "https://v1.hitokoto.cn/"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Safari/537.36"
+    }
 
     async with aiohttp.ClientSession() as session:
-        async with session.get(api_url) as response:
+        async with session.get(api_url, headers=headers) as response:
             if response.status == 200:
                 hitokoto = await response.json()
                 hitokoto_text = hitokoto.get("hitokoto")
@@ -115,3 +120,4 @@ async def get_hitokoto():
             else:
                 print("API请求失败")
                 return None
+'''
