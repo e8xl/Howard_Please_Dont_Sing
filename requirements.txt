@@ -1,2 +1,3 @@
 aiohttp==3.9.3
 khl.py==0.3.17
+neteasecloudmusic~=0.1.10

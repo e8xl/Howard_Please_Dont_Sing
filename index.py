@@ -4,12 +4,10 @@ import random
 import time
 from datetime import datetime, timedelta
 
-from khl import Bot, Message
+from khl import Bot, Message, SoftwareTypes
 from khl.card import Card, CardMessage, Element, Module, Types
 
 from funnyAPI import we  # , get_hitokoto
-
-from voiceAPI import Voice
 
 
 def open_file(path: str):
@@ -48,6 +46,7 @@ async def menu(msg: Message):
     c3.append(Module.Divider())  # 分割线
     c3.append(Module.Header('歌姬最重要的不是要唱歌吗??'))
     text = "「点歌 歌名」即可完成点歌任务"
+    c3.append(Module.Section(Element.Text(text, Types.Text.KMD)))
     c3.append(Module.Divider())  # 分割线
     c3.append(Module.Header('和我玩小游戏吧~ '))
     text = "「/r 1 100」掷骰子1-100，范围可自主调节。可在末尾添加第三个参数实现同时掷多个骰子\n"
@@ -120,7 +119,7 @@ async def music(msg: Message, *args):
 
 
 # 状态区域
-bot.client.update_listening_music(f"MusicBot", "e1GhtXL")  # 设置机器人状态
+bot.client.update_listening_music(f"MusicBot", "e1GhtXL", SoftwareTypes.CLOUD_MUSIC)  # 设置机器人状态
 
 # 机器人运行日志 监测运行状态
 logging.basicConfig(level='INFO')
