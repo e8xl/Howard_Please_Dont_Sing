@@ -45,4 +45,15 @@ amap_api_key为高德地图API 需自行申请 即可使用/we 天气功能
 python index.py
 ```
 
+## 小工具
+### #机器人状态
+***你也可以用更简单的办法 这样比较麻烦但很直观 所有操作都是GUI形式的***<br>
+
+在脚本目录Tools文件夹内CreateGame.py内运行运行机器人状态生成器<br>
+需要提前配置config文件保证token正确 机器人可以正常运行
+之后在机器人所在任何文字频道内输入如下指令 机器人会在频道内返回你游戏ID 随后修改index.py使用
+```shell
+/game-c {游戏名称} {游戏LOGO URL}
+```
+
 注:项目暂未支持webhook模式 若需使用webhook模式请参照[khl.py](https://github.com/TWT233/khl.py)自行修改代码

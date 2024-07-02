@@ -41,7 +41,8 @@ async def menu(msg: Message):
                          f"\n机器人启动时间: [{start_time}]\n"
                          f"娱乐部分参考项目[Ahri](https://github.com/Aewait/Valorant-Kook-Bot)"
                          f"丨音频部分[kook-voice-API](https://github.com/hank9999/kook-voice-API)"
-                         f"\n点歌机器人参考[KO-ON](https://github.com/Gunale0926/KO-ON-Bot) 感恩奉献:)", Types.Text.KMD)))
+                         f"\n点歌机器人参考[KO-ON](https://github.com/Gunale0926/KO-ON-Bot) 感恩奉献:)",
+                         Types.Text.KMD)))
     c3.append(Module.Section('「菜单」「帮助」都可以呼叫我\n'))
     c3.append(Module.Divider())  # 分割线
     c3.append(Module.Header('歌姬最重要的不是要唱歌吗??'))
@@ -49,9 +50,9 @@ async def menu(msg: Message):
     c3.append(Module.Section(Element.Text(text, Types.Text.KMD)))
     c3.append(Module.Divider())  # 分割线
     c3.append(Module.Header('和我玩小游戏吧~ '))
-    text = "「/r 1 100」掷骰子1-100，范围可自主调节。可在末尾添加第三个参数实现同时掷多个骰子\n"
-    text += "「/cd 秒数」倒计时，默认60秒\n"
-    text += "「/we 城市」查询城市未来3天的天气情况\n"
+    text = "「r 1 100」掷骰子1-100，范围可自主调节。可在末尾添加第三个参数实现同时掷多个骰子\n"
+    text += "「cd 秒数」倒计时，默认60秒\n"
+    text += "「we 城市」查询城市未来3天的天气情况\n"
     c3.append(Module.Section(Element.Text(text, Types.Text.KMD)))
     c3.append(Module.Divider())
     c3.append(
@@ -67,6 +68,8 @@ async def menu(msg: Message):
     '''
     cm.append(c3)
     await msg.reply(cm)
+    await bot.client.update_playing_game(2128858)
+
 
 
 # 娱乐项目
@@ -116,13 +119,11 @@ async def we_command(msg: Message, city: str = "err"):
 @bot.command(name='点歌')
 async def music(msg: Message, *args):
     await msg.reply(f"点歌功能暂未开放")
+    await bot.client.update_listening_music(f"MusicBot", "e1GhtXL", SoftwareTypes.CLOUD_MUSIC)  # 更新机器人状态
 
-
-# 状态区域
-bot.client.update_listening_music(f"MusicBot", "e1GhtXL", SoftwareTypes.CLOUD_MUSIC)  # 设置机器人状态
 
 # 机器人运行日志 监测运行状态
 logging.basicConfig(level='INFO')
 print("机器人已成功启动")
-bot.command.update_prefixes("")
+bot.command.update_prefixes("")  # 设置命令前缀为空
 bot.run()
