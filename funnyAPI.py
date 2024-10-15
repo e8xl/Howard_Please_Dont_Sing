@@ -4,6 +4,10 @@ from khl.card import Card, CardMessage, Element, Module, Types
 from datetime import datetime, timedelta
 import aiohttp
 import traceback
+import aiofiles
+import csv
+import os
+import random
 
 with open('./config/config.json', 'r', encoding='utf-8') as f:
     config = json.load(f)
@@ -121,3 +125,28 @@ async def get_hitokoto():
                 print("API请求失败")
                 return None
 '''
+
+# LocalHitokoto
+async def local_hitokoto():
+    # 获取当前脚本的目录
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    csv_path = os.path.join(script_dir, 'Tools', 'hitokoto.csv')
+
+    # 读取CSV文件内容
+    async with aiofiles.open(csv_path, mode='r', encoding='utf-8') as f:
+        content = await f.read()
+
+    # 按行分割内容
+    lines = content.splitlines()
+
+    # 使用csv.DictReader解析CSV内容
+    reader = csv.DictReader(lines)
+
+    # 收集所有的hitokoto
+    hitokotos = [row['hitokoto'] for row in reader if 'hitokoto' in row]
+
+    # 随机选择一个hitokoto并返回
+    if hitokotos:
+        return random.choice(hitokotos)
+    else:
+        return "没有找到任何hitokoto。"

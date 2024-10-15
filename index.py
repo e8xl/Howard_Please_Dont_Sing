@@ -4,10 +4,11 @@ import random
 import time
 from datetime import datetime, timedelta
 
-from khl import Bot, Message, SoftwareTypes
+from khl import Bot, Message
 from khl.card import Card, CardMessage, Element, Module, Types
 
-from funnyAPI import we  # , get_hitokoto
+import core
+from funnyAPI import we, local_hitokoto  # , get_hitokoto
 
 
 def open_file(path: str):
@@ -15,6 +16,8 @@ def open_file(path: str):
         tmp = json.load(f)
     return tmp
 
+
+# core.set_bot(core.bot)
 
 # 打开config.json
 config = open_file('./config/config.json')
@@ -37,11 +40,11 @@ async def menu(msg: Message):
     c3 = Card(
         Module.Header('你可以用下面这些指令呼叫我哦！'),
         Module.Context(
-            Element.Text(f"开源代码见[Github](https://github.com/e8xl/8XL_kook_Music_bot),"
+            Element.Text(f"开源代码见[Github](https://github.com/e8xl/Howard_Please_Dont_Sing),"
                          f"\n机器人启动时间: [{start_time}]\n"
                          f"娱乐部分参考项目[Ahri](https://github.com/Aewait/Valorant-Kook-Bot)"
-                         f"丨音频部分[kook-voice-API](https://github.com/hank9999/kook-voice-API)"
-                         f"\n点歌机器人参考[KO-ON](https://github.com/Gunale0926/KO-ON-Bot) 感恩奉献:)",
+                         f"丨音频部分（自己攒的）[Kook_VoiceAPI](https://github.com/e8xl/Kook_VoiceAPI)"
+                         f"\n感恩奉献:)",
                          Types.Text.KMD)))
     c3.append(Module.Section('「菜单」「帮助」都可以呼叫我\n'))
     c3.append(Module.Divider())  # 分割线
@@ -57,19 +60,23 @@ async def menu(msg: Message):
     c3.append(Module.Divider())
     c3.append(
         Module.Section('帮我Github点个Star吧~', Element.Button('让我看看', 'https://www.8xl.icu', Types.Click.LINK)))
-    c3.append(Module.Section('赞助一下吧~', Element.Button("赞助一下", 'https://afdian.net/a/888xl', Types.Click.LINK)))
+    c3.append(Module.Section('赞助一下吧~', Element.Button("赞助一下", 'https://afdian.com/a/888xl', Types.Click.LINK)))
     """
-    一言会导致菜单响应速度过慢 参考服务器与API调用所影响 可以删除下面c3.append到KMD)))
+    在线一言API会导致菜单响应速度过慢 参考服务器与API调用所影响 可以删除下面c3.append到KMD)))
     """
     '''
     c3.append(Module.Context(
         Element.Text(f"{await get_hitokoto()}", Types.Text.KMD)  # 插入一言功能
     ))
     '''
+
+    c3.append(Module.Context(
+        Element.Text(f"{await local_hitokoto()}", Types.Text.KMD)  # 插入一言功能
+    ))
+
     cm.append(c3)
     await msg.reply(cm)
     await bot.client.update_playing_game(2128858)
-
 
 
 # 娱乐项目
@@ -92,10 +99,10 @@ async def r(msg: Message, t_min: int = 1, t_max: int = 100, n: int = 1, *args):
 
 # 秒表
 # 倒计时函数，单位为秒，默认60秒
-@bot.command()
+@bot.command(name='cd', aliases=['倒计时', 'countdown'])
 async def cd(msg: Message, countdown_second: int = 60, *args):
     if args != ():
-        await msg.reply(f"参数错误，cd命令只支持1个参数\n正确用法: `/countdown 120` 生成一个120s的倒计时")
+        await msg.reply(f"参数错误，countdown命令只支持1个参数\n正确用法: `/countdown 120` 生成一个120s的倒计时")
         return
     elif countdown_second <= 0 or countdown_second >= 90000000:
         await msg.reply(f"倒计时时间超出范围！")
@@ -110,16 +117,71 @@ async def cd(msg: Message, countdown_second: int = 60, *args):
 
 
 # 天气
-@bot.command(name='we')
+@bot.command(name='we', aliases=["天气"])
 async def we_command(msg: Message, city: str = "err"):
     await we(msg, city)  # 调用we函数
 
 
 # 点歌服务
-@bot.command(name='点歌')
-async def music(msg: Message, *args):
-    await msg.reply(f"点歌功能暂未开放")
-    await bot.client.update_listening_music(f"MusicBot", "e1GhtXL", SoftwareTypes.CLOUD_MUSIC)  # 更新机器人状态
+@bot.command(name='play')
+async def play(msg: Message, *args):
+    if not args:
+        await msg.reply("请提供要播放的歌曲，例如：`play 歌名-歌手`")
+        return
+
+    song_input = args[0]
+    if '-' in song_input:
+        song_name, singer = song_input.split('-', 1)
+    else:
+        song_name = song_input
+        singer = "未知"
+
+    # 获取用户所在的语音频道ID和文本频道ID
+    voice_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
+    if voice_channels:
+        voice_channel_id = voice_channels[0].id
+        text_channel_id = msg.ctx.channel.id  # 假设在当前文本频道发送消息
+
+        # 如果机器人未加入语音频道，则加入
+        if voice_channel_id not in core.voice_manager.voice_clients:
+            await core.join_voice_channel(voice_channel_id, text_channel_id, msg)
+
+        # 添加歌曲到播放列表
+        await core.play_song(voice_channel_id, song_name.strip(), singer.strip(), msg)
+    else:
+        await msg.reply('请先加入一个语音频道再使用点歌功能')
+
+@bot.command(name='exit')
+async def exit_command(msg: Message):
+    voice_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
+    if voice_channels:
+        voice_channel_id = voice_channels[0].id
+        await core.leave_voice_channel(voice_channel_id, msg)
+    else:
+        await msg.reply('请先加入一个语音频道再使用退出功能')
+
+
+# 状态
+@bot.command(name='状态')
+async def status_command(msg: Message):
+    if msg.ctx.guild:
+        # 获取用户的服务器ID
+        guild_id = msg.ctx.guild.id
+        # 获取用户发送消息的文字频道ID
+        channel_id = msg.ctx.channel.id
+        # 尝试查找用户在语音频道中的状态
+        voice_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
+        if voice_channels:
+            voice_channel_id = voice_channels[0].id
+        else:
+            voice_channel_id = "无"
+
+        # 构造回复消息
+        reply_message = f"您当前所在\n服务器ID: {guild_id}\n文字频道ID: {channel_id}\n语音频道ID: {voice_channel_id}"
+        await msg.reply(reply_message)
+    else:
+        # 如果消息不在服务器中发送，给出提示
+        await msg.reply("此命令只能在服务器内使用。")
 
 
 # 机器人运行日志 监测运行状态

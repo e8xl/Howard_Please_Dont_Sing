@@ -1,3 +1,7 @@
 aiohttp==3.9.3
 khl.py==0.3.17
-neteasecloudmusic~=0.1.10
+pyncm-async==0.1.1
+
+requests~=2.31.0
+setuptools~=68.2.2
+aiofiles~=24.1.0
