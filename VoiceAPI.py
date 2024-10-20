@@ -9,7 +9,7 @@ import aiohttp
 
 # 配置日志记录器
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)  # 修改为 DEBUG 级别以查看心跳包日志
 handler = logging.StreamHandler(sys.stdout)
 formatter = logging.Formatter('[%(asctime)s][%(levelname)s]: %(message)s')
 handler.setFormatter(formatter)
@@ -185,8 +185,27 @@ class KookVoiceClient:
         logger.info(f"推流地址已构建: {stream_details}")
         return stream_details
 
+    def get_bitrate_kbps(self):
+        """
+        获取频道规定的音频比特率（kbps）
+        :return: int 比特率（kbps）或 None
+        """
+        if not self.stream_info:
+            logger.error("未加入语音频道或推流信息未获取")
+            return None
+        bitrate_bps = self.stream_info.get('bitrate')
+        if bitrate_bps:
+            bitrate_kbps = bitrate_bps // 1000  # 将 bps 转换为 kbps
+            return bitrate_kbps
+        else:
+            logger.error("未获取到 bitrate 信息")
+            return None
+
     async def close(self):
         """
         关闭客户端，清理资源
         """
         await self.leave_channel()
+
+
+__all__ = ["KookVoiceClient"]

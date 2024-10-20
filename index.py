@@ -4,7 +4,7 @@ import random
 import time
 from datetime import datetime, timedelta
 
-from khl import Bot, Message
+from khl import Bot, Message, SoftwareTypes
 from khl.card import Card, CardMessage, Element, Module, Types
 
 import core
@@ -16,8 +16,6 @@ def open_file(path: str):
         tmp = json.load(f)
     return tmp
 
-
-# core.set_bot(core.bot)
 
 # 打开config.json
 config = open_file('./config/config.json')
@@ -124,41 +122,32 @@ async def we_command(msg: Message, city: str = "err"):
 
 # 点歌服务
 @bot.command(name='play')
-async def play(msg: Message, *args):
-    if not args:
-        await msg.reply("请提供要播放的歌曲，例如：`play 歌名-歌手`")
-        return
-
-    song_input = args[0]
-    if '-' in song_input:
-        song_name, singer = song_input.split('-', 1)
-    else:
-        song_name = song_input
-        singer = "未知"
-
-    # 获取用户所在的语音频道ID和文本频道ID
+async def play(msg: Message):
+    # 获取用户所在的语音频道 ID
     voice_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
     if voice_channels:
         voice_channel_id = voice_channels[0].id
-        text_channel_id = msg.ctx.channel.id  # 假设在当前文本频道发送消息
+        await bot.client.update_listening_music("MusicBot", "e1GhtXL", SoftwareTypes.CLOUD_MUSIC)  # 更新机器人状态
+        await msg.reply(f"正在加入语音频道 ID: {voice_channel_id}")
 
-        # 如果机器人未加入语音频道，则加入
-        if voice_channel_id not in core.voice_manager.voice_clients:
-            await core.join_voice_channel(voice_channel_id, text_channel_id, msg)
-
-        # 添加歌曲到播放列表
-        await core.play_song(voice_channel_id, song_name.strip(), singer.strip(), msg)
+        # 调用 core.py 中的函数加入语音频道
+        stream = await core.join_voice_channel(voice_channel_id)
+        await msg.reply(f'{stream}')
     else:
         await msg.reply('请先加入一个语音频道再使用点歌功能')
 
-@bot.command(name='exit')
+
+@bot.command(name="exit")
 async def exit_command(msg: Message):
     voice_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
     if voice_channels:
         voice_channel_id = voice_channels[0].id
-        await core.leave_voice_channel(voice_channel_id, msg)
+        await msg.reply(f"正在退出语音频道 ID: {voice_channel_id}")
+
+        # 调用 core.py 中的函数离开语音频道
+        await core.leave_voice_channel(voice_channel_id)
     else:
-        await msg.reply('请先加入一个语音频道再使用退出功能')
+        await msg.reply('你不在任何语音频道中')
 
 
 # 状态
