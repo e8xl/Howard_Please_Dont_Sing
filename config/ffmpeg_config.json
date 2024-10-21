@@ -1,0 +1,6 @@
+{
+    "output_dir": "./AudioLib/Processed",
+    "audio_files": "./AudioLib/PlayList1",
+    "rtp_url": "rtp://62.234.174.153:37317",
+    "bitrate": 32000
+}

@@ -24,30 +24,35 @@ bot = Bot(token=config['token'])
 ffmpeg_path = os.path.join(os.path.dirname(__file__), 'Tools', 'ffmpeg', 'bin', 'ffmpeg.exe')
 
 
+def update_ffmpeg_config(stream_url: str, bitrate: str):
+    config_path = './config/ffmpeg_config.json'
+    config_data = open_file(config_path)
+    config_data['rtp_url'] = stream_url
+    config_data['bitrate'] = bitrate
+
+    with open(config_path, 'w', encoding='utf-8') as f:
+        json.dump(config_data, f, ensure_ascii=False, indent=4)
+
+
 async def join_voice_channel(channel_id: str):
     async with lock:
         token = config['token']
 
-        # 检查是否已经有这个频道的客户端实例
         if channel_id not in clients:
             client = Voice(token, channel_id)
             clients[channel_id] = client
         else:
             client = clients[channel_id]
 
-        # 加入语音频道
         await client.join_channel()
-
-        # 构建推流地址
         stream_details = client.construct_stream_url()
         if stream_details:
             print("推流详情:")
-            # for key, value in stream_details.items():
-            #     print(f"{key}: {value}")
             print(stream_details)
+            # Update the rtp_url in ffmpeg_config.json
+            update_ffmpeg_config(stream_details['stream_url'], stream_details['bitrate'])
             return stream_details
 
-        # 获取频道列表
         channel_list = await client.get_channel_list()
         if channel_list:
             print("已加入的语音频道列表:")
@@ -59,10 +64,10 @@ async def leave_voice_channel(channel_id: str):
     async with lock:
         if channel_id in clients:
             client = clients[channel_id]
-            # 离开语音频道
             await client.leave_channel()
             print("成功离开语音频道")
-            # 移除客户端实例
             del clients[channel_id]
+            # Clear the rtp_url in ffmpeg_config.json
+            update_ffmpeg_config('', '')
         else:
             print("没有找到对应的语音频道客户端实例")

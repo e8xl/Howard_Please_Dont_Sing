@@ -137,6 +137,26 @@ async def play(msg: Message):
         await msg.reply('请先加入一个语音频道再使用点歌功能')
 
 
+@bot.command(name="playc")
+async def playc(msg: Message, *args):
+    if not args:
+        await msg.reply('请检查频道参数是否填写')
+        return  # 退出函数，避免后续代码执行
+
+    voice_channel_id = args[0]
+    if voice_channel_id:
+        try:
+            await bot.client.update_listening_music("MusicBot", "e1GhtXL", SoftwareTypes.CLOUD_MUSIC)
+            await msg.reply(f"正在加入语音频道 ID: {voice_channel_id}")
+            stream = await core.join_voice_channel(voice_channel_id)
+            await msg.reply(f'{stream}')
+        except Exception as e:
+            # 处理可能出现的其他异常，并回复用户
+            await msg.reply(f"发生错误: {e}")
+    else:
+        await msg.reply('无效的频道 ID，请检查后重试')
+
+
 @bot.command(name="exit")
 async def exit_command(msg: Message):
     voice_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
@@ -149,6 +169,25 @@ async def exit_command(msg: Message):
     else:
         await msg.reply('你不在任何语音频道中')
 
+
+@bot.command(name="exitc")
+async def exitc(msg: Message, *args):
+    if not args:
+        await msg.reply('请检查频道参数是否填写')
+        return  # 退出函数，避免后续代码执行
+
+    voice_channel_id = args[0]
+    if voice_channel_id:
+        try:
+            await msg.reply(f"正在退出语音频道 ID: {voice_channel_id}")
+            # 调用 core.py 中的函数离开指定的语音频道
+            await core.leave_voice_channel(voice_channel_id)
+            await msg.reply("已成功退出语音频道")
+        except Exception as e:
+            # 处理可能出现的其他异常，并回复用户
+            await msg.reply(f"发生错误: {e}")
+    else:
+        await msg.reply('无效的频道 ID，请检查后重试')
 
 # 状态
 @bot.command(name='状态')

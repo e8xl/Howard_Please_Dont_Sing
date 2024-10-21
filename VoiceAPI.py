@@ -1,4 +1,4 @@
-# kook_voice_sdk.py
+# VoiceAPI.py
 
 import asyncio
 import logging
