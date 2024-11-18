@@ -2,9 +2,10 @@
 8XL_Kook_Music_bot<br>
 About KookAPP Music BOT from [khl.py](https://github.com/TWT233/khl.py)
 ***
-## 部分娱乐功能参照并修改自[Kook-Valorant-Bot](https://github.com/Valorant-Shop-CN/Kook-Valorant-Bot) <br>机器人功能主体来自[khl.py](https://github.com/TWT233/khl.py)
-### <br>音频部分来自[Kook_VoiceAPI](https://github.com/e8xl/Kook_VoiceAPI)<br>
-#### 代码水平*极差*大部分使用ChatGPT和前人的作品实现功能 轻喷
+## 部分娱乐功能参照并修改自[Kook-Valorant-Bot](https://github.com/Valorant-Shop-CN/Kook-Valorant-Bot)<br>机器人功能主体来自[khl.py](https://github.com/TWT233/khl.py)
+### 音频推流部分来自[Kook_VoiceAPI](https://github.com/e8xl/Kook_VoiceAPI)  
+### 网易平台使用[NeteaseCloudMusicApi](https://gitlab.com/Binaryify/neteasecloudmusicapi)
+#### 代码水平*极差* 大部分使用ChatGPT和前人的作品实现功能 轻喷
 ***
 项目名称是因为我的朋友Howard经常喜欢在打游戏的时候激情演唱他喜欢的歌曲  
 而我实在无能为力欣赏他的美妙歌喉 不得已寻找更为方便的点歌机器人 方便我们更为愉快的打游戏  
@@ -18,7 +19,12 @@ About KookAPP Music BOT from [khl.py](https://github.com/TWT233/khl.py)
 ```shell
 bot.command.update_prefixes("")  # 修改引号内的内容为你的指令前缀 留空则无前缀 直接输入指令
 ```
+---
 
+### 使用网易平台需要安装NodeJS和[NeteaseCloudMusicApi](https://gitlab.com/Binaryify/neteasecloudmusicapi)  
+~~也可以使用release带环境版本~~（现在还没有...）
+
+---
 ### 使用方法
 
 1.git本项目到本地
@@ -44,7 +50,7 @@ python index.py
 ```
 
 ## 小工具
-### #机器人状态
+### 机器人状态
 ***你也可以用更简单的办法 这样比较麻烦但很直观 所有操作都是GUI形式的***<br>
 
 在脚本目录Tools文件夹内CreateGame.py内运行运行机器人状态生成器<br>

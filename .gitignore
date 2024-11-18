@@ -4,3 +4,5 @@ cookie_storage
 cache/
 *.mp3
 TestTemp/
+Tools/neteasecloudmusicapi-main/
+Tools/node-v20.18.0-win-x64

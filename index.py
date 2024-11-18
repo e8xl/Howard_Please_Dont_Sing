@@ -189,6 +189,78 @@ async def exitc(msg: Message, *args):
     else:
         await msg.reply('无效的频道 ID，请检查后重试')
 
+
+@bot.command(name="search", aliases=["搜索"])
+async def s1_command(msg: Message, *args):
+    try:
+        if not args:
+            await msg.reply("参数缺失，请提供一个搜索关键字，例如：s1 周杰伦")
+            return
+
+        keyword = args[0]
+        await msg.reply(f"正在搜索关键字: {keyword}")
+        songs = await core.search_netease_music(keyword)
+
+        cm = CardMessage()
+        c3 = Card(
+            Module.Header('搜索结果如下：'))
+        c3.append(
+            Module.Container(Element.Image(src=msg.author.avatar)))
+        c3.append(Module.Divider())  # 分割线
+        text = f"{songs}"
+        c3.append(Module.Section(Element.Text(text, Types.Text.KMD)))
+        # c3.append(Module.Divider())  # 分割线
+        # c3.append(
+        #     Module.ActionGroup(
+        #         Element.Button("下一页", value='按钮值1', click=Types.Click.RETURN_VAL, theme=Types.Theme.INFO),
+        #         # Element.Button("按钮文字2", value='按钮值2', click=Types.Click.RETURN_VAL, theme=Types.Theme.DANGER),
+        #         # Element.Button("按钮文字3", value='https://khl-py.eu.org/', click=Types.Click.LINK,
+        #         #                theme=Types.Theme.SECONDARY)
+        #     ))
+
+        cm.append(c3)
+        await msg.reply(cm)
+
+    except Exception as e:
+        await msg.reply(f"发生错误: {e}")
+
+
+# 下载（测试）
+@bot.command(name='download')
+async def download(msg: Message, *args):
+    try:
+        if not args:
+            await msg.reply("参数缺失，请提供一个搜索关键字，例如：download 周杰伦")
+            return
+        else:
+            # await core.qrcode_login()
+            keyword = args[0]
+            await msg.reply(f"正在搜索关键字: {keyword}")
+            songs = await core.download_music(keyword)
+            await msg.reply(f"{songs}")
+    except Exception as e:
+        await msg.reply(f"发生错误: {e}")
+
+
+# qrcode login
+@bot.command(name='login')
+async def login(msg: Message):
+    try:
+        await core.qrcode_login()
+    except Exception as e:
+        await msg.reply(f"发生错误: {e}")
+
+
+# check CookieAlive
+@bot.command(name='check')
+async def check(msg: Message):
+    try:
+        a = await core.ensure_logged_in()
+        await msg.reply(a)
+    except Exception as e:
+        await msg.reply(f"发生错误: {e}")
+
+
 # 状态
 @bot.command(name='状态')
 async def status_command(msg: Message):
