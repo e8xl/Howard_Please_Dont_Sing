@@ -197,7 +197,7 @@ async def s1_command(msg: Message, *args):
             await msg.reply("参数缺失，请提供一个搜索关键字，例如：s1 周杰伦")
             return
 
-        keyword = args[0]
+        keyword = " ".join(args)  # 把空格后的所有内容拼接成一个字符串
         await msg.reply(f"正在搜索关键字: {keyword}")
         songs = await core.search_netease_music(keyword)
 
@@ -222,7 +222,8 @@ async def s1_command(msg: Message, *args):
         await msg.reply(cm)
 
     except Exception as e:
-        await msg.reply(f"发生错误: {e}")
+        await msg.reply(f"请检查API是否启动！若已经启动请报告开发者。 {e}")
+
 
 
 # 下载（测试）
@@ -234,7 +235,7 @@ async def download(msg: Message, *args):
             return
         else:
             # await core.qrcode_login()
-            keyword = args[0]
+            keyword = " ".join(args)  # 把空格后的所有内容拼接成一个字符串
             await msg.reply(f"正在搜索关键字: {keyword}")
             songs = await core.download_music(keyword)
             await msg.reply(f"{songs}")
@@ -246,6 +247,7 @@ async def download(msg: Message, *args):
 @bot.command(name='login')
 async def login(msg: Message):
     try:
+        await msg.reply("正在登录，请开发者查看机器人后台")
         await core.qrcode_login()
     except Exception as e:
         await msg.reply(f"发生错误: {e}")

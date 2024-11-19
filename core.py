@@ -97,7 +97,7 @@ async def search_netease_music(keyword: str):
                 else:
                     raise Exception("调用 API 失败")
     except Exception as e:
-        raise Exception(f"发生错误: {e}")
+        raise Exception(e)
 
 
 # 检查登录状态/login/status
@@ -206,12 +206,16 @@ async def qrcode_login():
 
 
 def parse_cookie_header(cookie_header: str) -> dict:
-    """将 Cookie Header 字符串解析为字典"""
+    """解析并仅保留指定的 Cookie 字段"""
+    allowed_keys = {"MUSIC_A_T", "MUSIC_R_T", "__csrf", "NMTID", "MUSIC_SNS", "MUSIC_U"}
     cookies = {}
-    for item in cookie_header.split("; "):
+    for item in cookie_header.split(";"):
         if "=" in item:
             key, value = item.split("=", 1)
-            cookies[key] = value
+            key = key.strip()
+            value = value.strip()
+            if key in allowed_keys:  # 只保留指定的字段
+                cookies[key] = value
     return cookies
 
 
@@ -252,9 +256,7 @@ async def ensure_logged_in():
     """确保用户已登录"""
     if not await session_is_valid():
         print("Cookie 无效或已过期")
-        print("重新登录中...")
-        result = await qrcode_login()
-        print(result)
+        return "Cookie不存在或过期，请通知开发者重新登录"
     else:
         a = "cookie有效"
         return a
@@ -268,7 +270,7 @@ async def download_music(keyword: str):
         # 加载 Cookie
         cookies = await load_cookies()
         if not cookies:
-            return "未登录，请先通过二维码登录"
+            return "未登录，请通知开发者完成登录操作"
 
         # 使用有效的 Cookie 创建会话
         async with aiohttp.ClientSession(cookies=cookies) as session:
@@ -294,6 +296,7 @@ async def download_music(keyword: str):
                         f"http://localhost:3000/song/download/url/v1?id={song_id}&level=higher") as download_resp:
                     download_data = await download_resp.json()
                     if download_data['code'] != 200 or not download_data['data']['url']:
+                        print("无法获取下载链接")
                         return "无法获取下载链接，可能需要 VIP 权限"
 
                     download_url = download_data['data']['url']
@@ -304,6 +307,7 @@ async def download_music(keyword: str):
                     async with session.get(download_url) as music_resp:
                         with open(file_name, 'wb') as f:
                             f.write(await music_resp.read())
+                            print(f"歌曲已下载: {song_name} - {artist_name} ({album_name})")
                     return f"歌曲已下载: {song_name} - {artist_name} ({album_name})"
     except Exception as e:
         return f"发生错误: {e}"
