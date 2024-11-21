@@ -4,16 +4,12 @@ import json
 import os
 
 import aiohttp
-import qrcode
-from khl import Bot
+from qrcode.main import QRCode
 
-from VoiceAPI import KookVoiceClient as Voice
-
-lock = asyncio.Lock()
-# 添加一个全局字典来存储客户端实例
-clients = {}
+from VoiceAPI import KookVoiceClient, VoiceClientError
 
 
+# region 环境配置部分
 def open_file(path: str):
     with open(path, 'r', encoding='utf-8') as f:
         tmp = json.load(f)
@@ -21,60 +17,13 @@ def open_file(path: str):
 
 
 config = open_file('./config/config.json')
-bot = Bot(token=config['token'])
 # 指定 ffmpeg 路径
 ffmpeg_path = os.path.join(os.path.dirname(__file__), 'Tools', 'ffmpeg', 'bin', 'ffmpeg.exe')
+token = config['token']
 
 
-def update_ffmpeg_config(stream_url: str, bitrate: str):
-    config_path = './config/ffmpeg_config.json'
-    config_data = open_file(config_path)
-    config_data['rtp_url'] = stream_url
-    config_data['bitrate'] = bitrate
-
-    with open(config_path, 'w', encoding='utf-8') as f:
-        json.dump(config_data, f, ensure_ascii=False, indent=4)
-
-
-async def join_voice_channel(channel_id: str):
-    async with lock:
-        token = config['token']
-
-        if channel_id not in clients:
-            client = Voice(token, channel_id)
-            clients[channel_id] = client
-        else:
-            client = clients[channel_id]
-
-        await client.join_channel()
-        stream_details = client.construct_stream_url()
-        if stream_details:
-            print("推流详情:")
-            print(stream_details)
-            # Update the rtp_url in ffmpeg_config.json
-            update_ffmpeg_config(stream_details['stream_url'], stream_details['bitrate'])
-            return stream_details
-
-        channel_list = await client.get_channel_list()
-        if channel_list:
-            print("已加入的语音频道列表:")
-            for channel in channel_list:
-                print(channel)
-
-
-async def leave_voice_channel(channel_id: str):
-    async with lock:
-        if channel_id in clients:
-            client = clients[channel_id]
-            await client.leave_channel()
-            print("成功离开语音频道")
-            del clients[channel_id]
-            # Clear the rtp_url in ffmpeg_config.json
-            update_ffmpeg_config('', '')
-        else:
-            print("没有找到对应的语音频道客户端实例")
-
-
+# endregion
+# region 网易API部分
 async def search_netease_music(keyword: str):
     # aiohttp调用网易云音乐API localhost:3000/search?keywords=keyword
     try:
@@ -154,7 +103,7 @@ async def get_login_status(session, cookie):
 
 
 def render_qr_to_console(data):
-    qr = qrcode.QRCode()
+    qr = QRCode()
     qr.add_data(data)
     qr.make(fit=True)
     qr_console = qr.make_image(fill_color="black", back_color="white")
@@ -247,7 +196,8 @@ async def session_is_valid() -> bool:
                 data = await resp.json()
                 if data.get("data", {}).get("code") == 200:
                     return True
-        except Exception:
+        except Exception as e:
+            print(e)
             pass
     return False
 
@@ -308,6 +258,57 @@ async def download_music(keyword: str):
                         with open(file_name, 'wb') as f:
                             f.write(await music_resp.read())
                             print(f"歌曲已下载: {song_name} - {artist_name} ({album_name})")
-                    return f"歌曲已下载: {song_name} - {artist_name} ({album_name})"
+                    return (f"歌曲已下载: {song_name} - {artist_name} ({album_name}\n"
+                            f"URL: {download_url}")
     except Exception as e:
         return f"发生错误: {e}"
+
+
+# endregion
+
+# region 点歌功能部分
+async def get_alive_channel_list():
+    client = KookVoiceClient(token)
+    try:
+        # 获取频道列表示例
+        list_data = await client.list_channels()
+        return list_data  # Return the actual data for processing
+    except VoiceClientError as e:
+        return {"error": str(e)}
+    finally:
+        await client.close()
+
+
+async def join_channel(channel_id):
+    client = KookVoiceClient(token, channel_id)
+    try:
+        # 加入语音频道示例
+        join_data = await client.join_channel()
+        return {"success": join_data}
+    except VoiceClientError as e:
+        return {"error": str(e)}
+    finally:
+        await client.close()
+
+
+async def leave_channel(channel_id):
+    client = KookVoiceClient(token, channel_id)
+    try:
+        # 离开语音频道示例
+        leave_data = await client.leave_channel()
+        return {"success": leave_data}
+    except VoiceClientError as e:
+        return {"error": str(e)}
+    finally:
+        await client.close()
+
+
+def is_bot_in_channel(alive_data, channel_id):
+    if 'error' in alive_data:
+        return False, alive_data['error']
+    for item in alive_data.get('items', []):
+        if item['id'] == channel_id:
+            return True, None
+    return False, None
+
+# endregion

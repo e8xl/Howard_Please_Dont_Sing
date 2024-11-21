@@ -1,32 +1,29 @@
-# VoiceAPI.py
-
 import asyncio
-import logging
-import sys
-from asyncio import CancelledError
 
 import aiohttp
 
-# 配置日志记录器
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)  # 修改为 DEBUG 级别以查看心跳包日志
-handler = logging.StreamHandler(sys.stdout)
-formatter = logging.Formatter('[%(asctime)s][%(levelname)s]: %(message)s')
-handler.setFormatter(formatter)
-logger.addHandler(handler)
+
+class VoiceClientError(Exception):
+    """自定义异常类用于KookVoiceClient相关错误"""
+
+    def __init__(self, message, code=None, data=None):
+        super().__init__(message)
+        self.code = code
+        self.data = data
+
+    def __str__(self):
+        base = super().__str__()
+        if self.code is not None:
+            return f"[Error {self.code}] {base}"
+        return base
 
 
 class KookVoiceClient:
     """
-    KOOK 语音客户端，用于处理语音频道的加入、离开、获取频道列表、保持连接活跃等操作
+    Kook App Voice API
     """
 
-    def __init__(self, token, channel_id):
-        """
-        初始化客户端
-        :param token: 机器人 Token
-        :param channel_id: 语音频道 ID
-        """
+    def __init__(self, token, channel_id = None):
         self.token = token
         self.channel_id = channel_id
         self.base_url = "https://www.kookapp.cn/api/v3"
@@ -34,17 +31,17 @@ class KookVoiceClient:
             "Authorization": f"Bot {self.token}"
         }
         self.session = aiohttp.ClientSession(headers=self.headers)
-        self.keep_alive_task = None  # 保持连接的任务
-        self.closed = False  # 标记客户端是否已关闭
-        self.stream_info = None  # 推流信息
 
-    async def join_channel(self, audio_ssrc=1111, audio_pt=111, rtcp_mux=True, password=None):
+    async def join_channel(self, audio_ssrc="1111", audio_pt="111", rtcp_mux=True, password=None):
         """
-        加入语音频道，获取推流信息
-        :param audio_ssrc: 传输的语音数据的 SSRC
-        :param audio_pt: 传输的语音数据的 Payload Type
-        :param rtcp_mux: 是否使用 RTCP Mux
-        :param password: 如果频道需要密码，可以传入
+        加入语音频道
+
+        :param audio_ssrc: 传输的语音数据的ssrc
+        :param audio_pt: 传输的语音数据的payload_type
+        :param rtcp_mux: 是否将rtcp与rtp使用同一个端口进行传输
+        :param password: 语音频道密码（如果需要）
+        :return: 加入语音频道的相关数据
+        :raises VoiceClientError: 如果请求失败或返回错误
         """
         url = f"{self.base_url}/voice/join"
         data = {
@@ -55,157 +52,150 @@ class KookVoiceClient:
         }
         if password:
             data["password"] = password
-
         try:
-            async with self.session.post(url, json=data) as response:
+            async with self.session.post(url, json=data, timeout=10) as response:
                 if response.status == 200:
                     response_data = await response.json()
                     if response_data['code'] == 0:
-                        self.stream_info = response_data['data']
-                        logger.info("成功加入语音频道，推流信息已获取")
-                        # 开始保持连接的任务
-                        self.keep_alive_task = asyncio.create_task(self._keep_alive_loop())
+                        data = response_data['data']
+                        # 转换rtcp_port为整数，如果存在且为字符串
+                        if 'rtcp_port' in data and isinstance(data['rtcp_port'], str):
+                            try:
+                                data['rtcp_port'] = int(data['rtcp_port'])
+                            except ValueError:
+                                raise VoiceClientError("无效的 rtcp_port 格式", code=response_data.get('code'),
+                                                       data=response_data)
+                        return data
                     else:
-                        logger.error(f"加入语音频道失败，错误信息: {response_data['message']}")
-                        await self.leave_channel()
+                        raise VoiceClientError(
+                            f"加入语音频道失败，错误信息: {response_data['message']}",
+                            code=response_data.get('code'),
+                            data=response_data
+                        )
                 else:
-                    logger.error(f"加入语音频道请求失败，状态码: {response.status}")
-                    await self.leave_channel()
+                    raise VoiceClientError(
+                        f"加入语音频道请求失败，状态码: {response.status}",
+                        code=response.status
+                    )
+        except aiohttp.ClientError as e:
+            raise VoiceClientError(f"HTTP请求错误: {str(e)}") from e
+        except asyncio.TimeoutError:
+            raise VoiceClientError("HTTP请求超时")
         except Exception as e:
-            logger.exception(f"加入语音频道异常: {str(e)}")
-            await self.leave_channel()
+            raise VoiceClientError(f"加入语音频道异常: {str(e)}") from e
 
-    async def leave_channel(self):
-        """
-        离开语音频道
-        """
-        if self.closed:
-            return
-        self.closed = True
-        url = f"{self.base_url}/voice/leave"
-        data = {
-            "channel_id": self.channel_id
-        }
-        try:
-            # 先取消保持连接的任务
-            if self.keep_alive_task:
-                self.keep_alive_task.cancel()
-
-            async with self.session.post(url, json=data) as response:
-                if response.status == 200:
-                    response_data = await response.json()
-                    if response_data['code'] == 0:
-                        logger.info("成功离开语音频道")
-                    else:
-                        logger.error(f"离开语音频道失败: {response_data['message']}")
-                else:
-                    logger.error(f"离开语音频道请求失败，状态码: {response.status}")
-        except Exception as e:
-            logger.exception(f"离开语音频道异常: {str(e)}")
-        finally:
-            await self.session.close()
-
-    async def _keep_alive_loop(self):
-        """
-        保持语音连接活跃的循环任务
-        """
-        url = f"{self.base_url}/voice/keep-alive"
-        data = {
-            "channel_id": self.channel_id
-        }
-        try:
-            while True:
-                async with self.session.post(url, json=data) as response:
-                    if response.status == 200:
-                        response_data = await response.json()
-                        if response_data['code'] == 0:
-                            logger.debug("发送心跳包成功")
-                        else:
-                            logger.error(f"发送心跳包失败: {response_data['message']}")
-                    else:
-                        logger.error(f"发送心跳包请求失败，状态码: {response.status}")
-                await asyncio.sleep(45)  # 每隔45秒发送一次心跳包
-        except CancelledError:
-            logger.info("心跳任务已取消")
-        except Exception as e:
-            logger.exception(f"心跳任务异常: {str(e)}")
-            await self.leave_channel()
-
-    async def get_channel_list(self):
+    async def list_channels(self):
         """
         获取机器人加入的语音频道列表
-        :return: 频道列表数据或 None
+
+        :return: 频道列表数据
+        :raises VoiceClientError: 如果请求失败或返回错误
         """
         url = f"{self.base_url}/voice/list"
         try:
-            async with self.session.get(url) as response:
+            async with self.session.get(url, timeout=10) as response:
                 if response.status == 200:
                     response_data = await response.json()
                     if response_data['code'] == 0:
-                        logger.info("成功获取语音频道列表")
-                        return response_data['data']['items']
+                        data = response_data['data']
+                        # 可选：进一步处理数据，例如验证字段类型
+                        return data
                     else:
-                        logger.error(f"获取语音频道列表失败，错误信息: {response_data['message']}")
+                        raise VoiceClientError(
+                            f"获取频道列表失败，错误信息: {response_data['message']}",
+                            code=response_data.get('code'),
+                            data=response_data
+                        )
                 else:
-                    logger.error(f"获取语音频道列表请求失败，状态码: {response.status}")
+                    raise VoiceClientError(
+                        f"获取频道列表请求失败，状态码: {response.status}",
+                        code=response.status
+                    )
+        except aiohttp.ClientError as e:
+            raise VoiceClientError(f"HTTP请求错误: {str(e)}") from e
+        except asyncio.TimeoutError:
+            raise VoiceClientError("HTTP请求超时")
         except Exception as e:
-            logger.exception(f"获取语音频道列表异常: {str(e)}")
-        return None
+            raise VoiceClientError(f"获取频道列表异常: {str(e)}") from e
 
-    def construct_stream_url(self):
+    async def leave_channel(self, channel_id=None):
         """
-        构建推流地址，供其他程序（如 ffmpeg）使用
-        :return: dict 包含推流地址和相关参数，或 None
+        离开语音频道
+
+        :param channel_id: 需要离开的语音频道ID。如果未提供，将使用初始化时的channel_id
+        :return: 操作结果数据
+        :raises VoiceClientError: 如果请求失败或返回错误
         """
-        if not self.stream_info:
-            logger.error("未加入语音频道或推流信息未获取")
-            return None
-
-        ip = self.stream_info.get('ip')
-        port = self.stream_info.get('port')
-        rtcp_mux = self.stream_info.get('rtcp_mux', True)
-        rtcp_port = self.stream_info.get('rtcp_port') if not rtcp_mux else None
-
-        if rtcp_mux:
-            stream_url = f"rtp://{ip}:{port}"
-        else:
-            stream_url = f"rtp://{ip}:{port}?rtcpport={rtcp_port}"
-
-        stream_details = {
-            "stream_url": stream_url,
-            "ip": ip,
-            "port": port,
-            "rtcp_mux": rtcp_mux,
-            "rtcp_port": rtcp_port,
-            "bitrate": self.stream_info.get('bitrate'),
-            "audio_ssrc": self.stream_info.get('audio_ssrc'),
-            "audio_pt": self.stream_info.get('audio_pt')
+        url = f"{self.base_url}/voice/leave"
+        # 使用提供的channel_id或默认的self.channel_id
+        cid = channel_id if channel_id else self.channel_id
+        data = {
+            "channel_id": cid
         }
+        try:
+            async with self.session.post(url, json=data, timeout=10) as response:
+                if response.status == 200:
+                    response_data = await response.json()
+                    if response_data['code'] == 0:
+                        return response_data['data']
+                    else:
+                        raise VoiceClientError(
+                            f"离开语音频道失败，错误信息: {response_data['message']}",
+                            code=response_data.get('code'),
+                            data=response_data
+                        )
+                else:
+                    raise VoiceClientError(
+                        f"离开语音频道请求失败，状态码: {response.status}",
+                        code=response.status
+                    )
+        except aiohttp.ClientError as e:
+            raise VoiceClientError(f"HTTP请求错误: {str(e)}") from e
+        except asyncio.TimeoutError:
+            raise VoiceClientError("HTTP请求超时")
+        except Exception as e:
+            raise VoiceClientError(f"离开语音频道异常: {str(e)}") from e
 
-        logger.info(f"推流地址已构建: {stream_details}")
-        return stream_details
+    async def keep_alive(self, channel_id=None):
+        """
+        保持语音连接活跃
 
-    def get_bitrate_kbps(self):
+        :param channel_id: 需要保持活跃的语音频道ID。如果未提供，将使用初始化时的channel_id
+        :return: 操作结果数据
+        :raises VoiceClientError: 如果请求失败或返回错误
         """
-        获取频道规定的音频比特率（kbps）
-        :return: int 比特率（kbps）或 None
-        """
-        if not self.stream_info:
-            logger.error("未加入语音频道或推流信息未获取")
-            return None
-        bitrate_bps = self.stream_info.get('bitrate')
-        if bitrate_bps:
-            bitrate_kbps = bitrate_bps // 1000  # 将 bps 转换为 kbps
-            return bitrate_kbps
-        else:
-            logger.error("未获取到 bitrate 信息")
-            return None
+        url = f"{self.base_url}/voice/keep-alive"
+        # 使用提供的channel_id或默认的self.channel_id
+        cid = channel_id if channel_id else self.channel_id
+        data = {
+            "channel_id": cid
+        }
+        try:
+            async with self.session.post(url, json=data, timeout=10) as response:
+                if response.status == 200:
+                    response_data = await response.json()
+                    if response_data['code'] == 0:
+                        return response_data['data']
+                    else:
+                        raise VoiceClientError(
+                            f"保持语音连接活跃失败，错误信息: {response_data['message']}",
+                            code=response_data.get('code'),
+                            data=response_data
+                        )
+                else:
+                    raise VoiceClientError(
+                        f"保持语音连接活跃请求失败，状态码: {response.status}",
+                        code=response.status
+                    )
+        except aiohttp.ClientError as e:
+            raise VoiceClientError(f"HTTP请求错误: {str(e)}") from e
+        except asyncio.TimeoutError:
+            raise VoiceClientError("HTTP请求超时")
+        except Exception as e:
+            raise VoiceClientError(f"保持语音连接活跃异常: {str(e)}") from e
 
     async def close(self):
         """
-        关闭客户端，清理资源
+        关闭HTTP会话
         """
-        await self.leave_channel()
-
-
-__all__ = ["KookVoiceClient"]
+        await self.session.close()

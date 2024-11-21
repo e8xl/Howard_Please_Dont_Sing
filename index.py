@@ -4,7 +4,7 @@ import random
 import time
 from datetime import datetime, timedelta
 
-from khl import Bot, Message, SoftwareTypes
+from khl import Bot, Message
 from khl.card import Card, CardMessage, Element, Module, Types
 
 import core
@@ -47,7 +47,9 @@ async def menu(msg: Message):
     c3.append(Module.Section('「菜单」「帮助」都可以呼叫我\n'))
     c3.append(Module.Divider())  # 分割线
     c3.append(Module.Header('歌姬最重要的不是要唱歌吗??'))
-    text = "「点歌 歌名」即可完成点歌任务"
+    text = "「点歌 歌名」即可完成点歌任务\n"
+    text += "「搜索 歌名-歌手(可选)」搜索音乐\n"
+    text += "「下载 歌名-歌手(可选)」下载音乐（不要滥用球球了）"
     c3.append(Module.Section(Element.Text(text, Types.Text.KMD)))
     c3.append(Module.Divider())  # 分割线
     c3.append(Module.Header('和我玩小游戏吧~ '))
@@ -100,7 +102,7 @@ async def r(msg: Message, t_min: int = 1, t_max: int = 100, n: int = 1, *args):
 @bot.command(name='cd', aliases=['倒计时', 'countdown'])
 async def cd(msg: Message, countdown_second: int = 60, *args):
     if args != ():
-        await msg.reply(f"参数错误，countdown命令只支持1个参数\n正确用法: `/countdown 120` 生成一个120s的倒计时")
+        await msg.reply(f"参数错误，countdown命令只支持1个参数\n正确用法: `countdown 120` 生成一个120s的倒计时")
         return
     elif countdown_second <= 0 or countdown_second >= 90000000:
         await msg.reply(f"倒计时时间超出范围！")
@@ -120,77 +122,110 @@ async def we_command(msg: Message, city: str = "err"):
     await we(msg, city)  # 调用we函数
 
 
-# 点歌服务
-@bot.command(name='play')
-async def play(msg: Message):
-    # 获取用户所在的语音频道 ID
-    voice_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
-    if voice_channels:
-        voice_channel_id = voice_channels[0].id
-        await bot.client.update_listening_music("MusicBot", "e1GhtXL", SoftwareTypes.CLOUD_MUSIC)  # 更新机器人状态
-        await msg.reply(f"正在加入语音频道 ID: {voice_channel_id}")
+# region 点歌指令操作
+@bot.command(name="play")
+async def play(msg: Message, *args):
+    # 检查列表中的频道，以确保机器人不会重复加入同一频道
+    alive_data = await core.get_alive_channel_list()
+    if 'error' in alive_data:
+        await msg.reply(f"获取频道列表时发生错误: {alive_data['error']}")
+        return
 
-        # 调用 core.py 中的函数加入语音频道
-        stream = await core.join_voice_channel(voice_channel_id)
-        await msg.reply(f'{stream}')
+    # 确定要加入的频道
+    if args:
+        target_channel_id = args[0]
     else:
-        await msg.reply('请先加入一个语音频道再使用点歌功能')
+        # 获取用户当前所在的语音频道
+        user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
+        if not user_channels:
+            await msg.reply('请先加入一个语音频道或提供频道ID后再使用点歌功能')
+            return
+        target_channel_id = user_channels[0].id
 
+    # 检测机器人是否在目标频道中
+    is_in_channel, error = core.is_bot_in_channel(alive_data, target_channel_id)
+    if error:
+        await msg.reply(f"检查频道状态时发生错误: {error}")
+        return
 
-@bot.command(name="playc")
-async def playc(msg: Message, *args):
-    if not args:
-        await msg.reply('请检查频道参数是否填写')
-        return  # 退出函数，避免后续代码执行
+    if is_in_channel:
+        # 机器人已在目标频道中，无需再次加入
+        leave_result = await core.leave_channel(target_channel_id)
+        if 'error' in leave_result:
+            await msg.reply(f"尝试离开频道时发生错误: {leave_result['error']}")
+            return
+        # 重新获取频道列表，以确保机器人已离开
+        alive_data = await core.get_alive_channel_list()
+        is_in_channel, error = core.is_bot_in_channel(alive_data, target_channel_id)
+        if is_in_channel:
+            await msg.reply("离开频道失败，请稍后再试。")
+            return
+        elif error:
+            await msg.reply(f"检查频道状态时发生错误: {error}")
+            return
 
-    voice_channel_id = args[0]
-    if voice_channel_id:
-        try:
-            await bot.client.update_listening_music("MusicBot", "e1GhtXL", SoftwareTypes.CLOUD_MUSIC)
-            await msg.reply(f"正在加入语音频道 ID: {voice_channel_id}")
-            stream = await core.join_voice_channel(voice_channel_id)
-            await msg.reply(f'{stream}')
-        except Exception as e:
-            # 处理可能出现的其他异常，并回复用户
-            await msg.reply(f"发生错误: {e}")
+    # 尝试加入目标频道
+    join_result = await core.join_channel(target_channel_id)
+    if 'error' in join_result:
+        await msg.reply(f"加入频道失败: {join_result['error']}")
     else:
-        await msg.reply('无效的频道 ID，请检查后重试')
+        await msg.reply(f"成功加入频道: {target_channel_id}")
 
 
 @bot.command(name="exit")
-async def exit_command(msg: Message):
-    voice_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
-    if voice_channels:
-        voice_channel_id = voice_channels[0].id
-        await msg.reply(f"正在退出语音频道 ID: {voice_channel_id}")
+async def exit_command(msg: Message, *args):
+    # 获取频道列表，以确保机器人不会尝试离开不存在的频道
+    alive_data = await core.get_alive_channel_list()
+    if 'error' in alive_data:
+        await msg.reply(f"获取频道列表时发生错误: {alive_data['error']}")
+        return
 
-        # 调用 core.py 中的函数离开语音频道
-        await core.leave_voice_channel(voice_channel_id)
+    # 确定离开的频道
+    if args:
+        target_channel_id = args[0]
     else:
-        await msg.reply('你不在任何语音频道中')
+        # 获取用户当前所在的语音频道
+        user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
+        if not user_channels:
+            await msg.reply('请先加入一个语音频道或提供频道ID后再使用退出功能')
+            return
+        target_channel_id = user_channels[0].id
 
+    # 检测机器人是否在目标频道中
+    is_in_channel, error = core.is_bot_in_channel(alive_data, target_channel_id)
+    if error:
+        await msg.reply(f"检查频道状态时发生错误: {error}")
+        return
 
-@bot.command(name="exitc")
-async def exitc(msg: Message, *args):
-    if not args:
-        await msg.reply('请检查频道参数是否填写')
-        return  # 退出函数，避免后续代码执行
+    if not is_in_channel:
+        await msg.reply(f"机器人未在{target_channel_id}该频道中。")
+        return
 
-    voice_channel_id = args[0]
-    if voice_channel_id:
-        try:
-            await msg.reply(f"正在退出语音频道 ID: {voice_channel_id}")
-            # 调用 core.py 中的函数离开指定的语音频道
-            await core.leave_voice_channel(voice_channel_id)
-            await msg.reply("已成功退出语音频道")
-        except Exception as e:
-            # 处理可能出现的其他异常，并回复用户
-            await msg.reply(f"发生错误: {e}")
+    # 尝试离开目标频道
+    leave_result = await core.leave_channel(target_channel_id)
+    if 'error' in leave_result:
+        await msg.reply(f"离开频道失败: {leave_result['error']}")
     else:
-        await msg.reply('无效的频道 ID，请检查后重试')
+        await msg.reply(f"成功离开频道: {target_channel_id}")
 
 
-@bot.command(name="search", aliases=["搜索"])
+@bot.command(name="alive")
+async def alive_command(msg: Message):
+    try:
+        alive_data = await core.get_alive_channel_list()
+        if 'error' in alive_data:
+            await msg.reply(f"获取频道列表时发生错误: {alive_data['error']}")
+        else:
+            await msg.reply(f'获取频道列表成功: {json.dumps(alive_data, ensure_ascii=False)}')
+    except Exception as e:
+        await msg.reply(f"发生错误: {e}")
+
+
+# endregion
+
+
+# region 网易API测试部分
+@bot.command(name="search", aliases=["搜索", "s"])
 async def s1_command(msg: Message, *args):
     try:
         if not args:
@@ -217,7 +252,9 @@ async def s1_command(msg: Message, *args):
         #         # Element.Button("按钮文字3", value='https://khl-py.eu.org/', click=Types.Click.LINK,
         #         #                theme=Types.Theme.SECONDARY)
         #     ))
-
+        c3.append(Module.Context(
+            Element.Text(f"{await local_hitokoto()}", Types.Text.KMD)  # 插入一言功能
+        ))
         cm.append(c3)
         await msg.reply(cm)
 
@@ -225,13 +262,12 @@ async def s1_command(msg: Message, *args):
         await msg.reply(f"请检查API是否启动！若已经启动请报告开发者。 {e}")
 
 
-
 # 下载（测试）
-@bot.command(name='download')
+@bot.command(name='download', aliases=["d", "下载"])
 async def download(msg: Message, *args):
     try:
         if not args:
-            await msg.reply("参数缺失，请提供一个搜索关键字，例如：download 周杰伦")
+            await msg.reply("参数缺失，请提供一个搜索关键字，例如：d 周杰伦")
             return
         else:
             # await core.qrcode_login()
@@ -263,6 +299,9 @@ async def check(msg: Message):
         await msg.reply(f"发生错误: {e}")
 
 
+# endregion
+
+# region 检测功能
 # 状态
 @bot.command(name='状态')
 async def status_command(msg: Message):
@@ -285,6 +324,8 @@ async def status_command(msg: Message):
         # 如果消息不在服务器中发送，给出提示
         await msg.reply("此命令只能在服务器内使用。")
 
+
+# endregion
 
 # 机器人运行日志 监测运行状态
 logging.basicConfig(level='INFO')
