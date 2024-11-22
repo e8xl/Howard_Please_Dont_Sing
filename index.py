@@ -1,8 +1,10 @@
+import asyncio
 import json
 import logging
 import random
 import time
 from datetime import datetime, timedelta
+from typing import Dict
 
 from khl import Bot, Message
 from khl.card import Card, CardMessage, Element, Module, Types
@@ -123,6 +125,9 @@ async def we_command(msg: Message, city: str = "err"):
 
 
 # region 点歌指令操作
+keep_alive_tasks: Dict[str, asyncio.Task] = {}  # 用于存储频道保活任务
+
+
 @bot.command(name="play")
 async def play(msg: Message, *args):
     # 检查列表中的频道，以确保机器人不会重复加入同一频道
@@ -169,7 +174,10 @@ async def play(msg: Message, *args):
     if 'error' in join_result:
         await msg.reply(f"加入频道失败: {join_result['error']}")
     else:
-        await msg.reply(f"成功加入频道: {target_channel_id}")
+        await msg.reply(f"成功加入频道: {target_channel_id}\n{join_result}")
+        if target_channel_id not in keep_alive_tasks:
+            task = asyncio.create_task(core.keep_channel_alive(target_channel_id))
+            keep_alive_tasks[target_channel_id] = task
 
 
 @bot.command(name="exit")
@@ -207,6 +215,18 @@ async def exit_command(msg: Message, *args):
         await msg.reply(f"离开频道失败: {leave_result['error']}")
     else:
         await msg.reply(f"成功离开频道: {target_channel_id}")
+"""
+    # 取消保持频道活跃的任务
+        task = keep_alive_tasks.pop(target_channel_id, None)
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                print(f"保持频道 {target_channel_id} 活跃的任务已成功取消。")
+            except Exception as e:
+                print(f"取消保持频道 {target_channel_id} 活跃任务时发生错误: {e}")
+                """
 
 
 @bot.command(name="alive")

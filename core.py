@@ -171,7 +171,7 @@ def parse_cookie_header(cookie_header: str) -> dict:
 async def save_cookies(cookies: dict):
     """保存 Cookie 到文件"""
     with open("cookie.json", "w") as f:
-        json.dump(cookies, f)
+        json.dump(cookies, f)  # type: ignore
 
 
 async def load_cookies() -> dict:
@@ -208,7 +208,7 @@ async def ensure_logged_in():
         print("Cookie 无效或已过期")
         return "Cookie不存在或过期，请通知开发者重新登录"
     else:
-        a = "cookie有效"
+        a = "网易API Cookie有效"
         return a
 
 
@@ -267,6 +267,9 @@ async def download_music(keyword: str):
 # endregion
 
 # region 点歌功能部分
+keep_alive_tasks = {}
+
+
 async def get_alive_channel_list():
     client = KookVoiceClient(token)
     try:
@@ -310,5 +313,17 @@ def is_bot_in_channel(alive_data, channel_id):
         if item['id'] == channel_id:
             return True, None
     return False, None
+
+
+async def keep_channel_alive(channel_id):
+    client = KookVoiceClient(token, channel_id)
+    while True:
+        try:
+            await client.keep_alive(channel_id)
+            print(f"保持频道 {channel_id} 活跃成功")
+        except VoiceClientError as e:
+            # 处理错误，例如记录日志或尝试重新连接
+            print(f"保持频道 {channel_id} 活跃时出错: {e}")
+        await asyncio.sleep(40)  # 等待40秒后再次调用
 
 # endregion
