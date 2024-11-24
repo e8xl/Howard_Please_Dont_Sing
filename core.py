@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import time
 
 import aiohttp
 from qrcode.main import QRCode
@@ -17,9 +18,15 @@ def open_file(path: str):
 
 
 config = open_file('./config/config.json')
-# 指定 ffmpeg 路径
-ffmpeg_path = os.path.join(os.path.dirname(__file__), 'Tools', 'ffmpeg', 'bin', 'ffmpeg.exe')
 token = config['token']
+
+
+# 设置 ffmpeg 路径
+def set_ffmpeg_path():
+    ffmpeg_path = os.path.join(os.path.dirname(__file__), 'Tools', 'ffmpeg', 'bin', 'ffmpeg.exe')
+    if not os.path.exists(ffmpeg_path):
+        raise FileNotFoundError(f"未找到 ffmpeg.exe，请检查路径是否正确: {ffmpeg_path}")
+    return ffmpeg_path
 
 
 # endregion
@@ -91,6 +98,7 @@ async def register_anonimous():
                 return None
 
 
+# 获取登陆状态
 async def get_login_status(session, cookie):
     try:
         status_response = await session.post(
@@ -102,6 +110,7 @@ async def get_login_status(session, cookie):
         print(f"获取登录状态失败：{e}")
 
 
+# 展示二维码
 def render_qr_to_console(data):
     qr = QRCode()
     qr.add_data(data)
@@ -110,6 +119,7 @@ def render_qr_to_console(data):
     qr_console.show()
 
 
+# 二维码登录
 async def qrcode_login():
     """通过二维码登录并保存有效的 Cookie"""
     async with aiohttp.ClientSession() as session:
@@ -154,6 +164,7 @@ async def qrcode_login():
             return f"发生错误：{e}"
 
 
+# 解析 Cookie 字段
 def parse_cookie_header(cookie_header: str) -> dict:
     """解析并仅保留指定的 Cookie 字段"""
     allowed_keys = {"MUSIC_A_T", "MUSIC_R_T", "__csrf", "NMTID", "MUSIC_SNS", "MUSIC_U"}
@@ -168,12 +179,14 @@ def parse_cookie_header(cookie_header: str) -> dict:
     return cookies
 
 
+# 保存 Cookie 到文件
 async def save_cookies(cookies: dict):
     """保存 Cookie 到文件"""
     with open("cookie.json", "w") as f:
         json.dump(cookies, f)  # type: ignore
 
 
+# 从文件加载 Cookie
 async def load_cookies() -> dict:
     """从文件加载 Cookie"""
     try:
@@ -183,6 +196,7 @@ async def load_cookies() -> dict:
         return {}
 
 
+# 检查当前保存的 Cookie 是否有效
 async def session_is_valid() -> bool:
     """检查当前保存的 Cookie 是否有效"""
     cookies = await load_cookies()
@@ -202,16 +216,18 @@ async def session_is_valid() -> bool:
     return False
 
 
+# 确保用户已登录
 async def ensure_logged_in():
     """确保用户已登录"""
     if not await session_is_valid():
         print("Cookie 无效或已过期")
         return "Cookie不存在或过期，请通知开发者重新登录"
     else:
-        a = "网易API Cookie有效"
-        return a
+        status = "网易API Cookie有效"
+        return status
 
 
+# 下载音乐
 async def download_music(keyword: str):
     try:
         # 确保已登录
@@ -282,7 +298,32 @@ async def get_alive_channel_list():
         await client.close()
 
 
+cooldown_tracker = {}
+cooldown_seconds = 5  # 冷却时间（秒）
+
+
+# 全局CD检查
+def check_cooldown(channel_id):
+    """
+    检查指定 channel_id 是否处于冷却中。
+    如果在冷却中，返回剩余时间；否则记录当前时间并返回 None。
+    """
+    current_time = time.time()
+    if channel_id in cooldown_tracker:
+        elapsed_time = current_time - cooldown_tracker[channel_id]
+        if elapsed_time < cooldown_seconds:
+            wait_cd = cooldown_seconds - elapsed_time
+            return wait_cd  # 返回剩余冷却时间
+    # 更新冷却时间戳
+    cooldown_tracker[channel_id] = current_time
+    return None  # 没有冷却限制
+
+
 async def join_channel(channel_id):
+    wait_cd = check_cooldown(channel_id)
+    if wait_cd is not None:
+        return {"error": f"请等待 {wait_cd:.2f} 秒后使用"}
+
     client = KookVoiceClient(token, channel_id)
     try:
         # 加入语音频道示例
@@ -295,6 +336,10 @@ async def join_channel(channel_id):
 
 
 async def leave_channel(channel_id):
+    wait_cd = check_cooldown(channel_id)
+    if wait_cd is not None:
+        return {"error": f"请等待 {wait_cd:.2f} 秒后使用"}
+
     client = KookVoiceClient(token, channel_id)
     try:
         # 离开语音频道示例
@@ -325,5 +370,53 @@ async def keep_channel_alive(channel_id):
             # 处理错误，例如记录日志或尝试重新连接
             print(f"保持频道 {channel_id} 活跃时出错: {e}")
         await asyncio.sleep(40)  # 等待40秒后再次调用
+
+
+# endregion
+
+# region 推流功能(Test)
+async def search_files(folder_path="AudioLib", search_keyword="", file_extensions=None):
+    """
+    搜索指定文件夹中符合关键字和文件后缀的文件。
+
+    :param folder_path: 要搜索的文件夹路径
+    :param search_keyword: 文件名中包含的关键字（部分匹配）
+    :param file_extensions: 文件后缀列表（如['.flac', '.mp3', '.wav']）
+    :return: 符合条件的文件路径列表
+    """
+    result_files = []  # 用于存储符合条件的文件路径
+
+    # 遍历文件夹及其子文件夹中的所有文件
+    for root, dirs, files in os.walk(folder_path):
+        # 遍历当前目录下的文件
+        for music_name in files:
+            # 检查文件名是否包含指定的关键字
+            if search_keyword in music_name:
+                # 检查文件后缀是否符合要求
+                if any(music_name.endswith(extension) for extension in file_extensions):
+                    # 将符合条件的文件完整路径添加到结果列表
+                    result_files.append(os.path.join(root, music_name))
+
+    return result_files  # 返回符合条件的文件列表
+
+
+async def stream_audio(audio_file_path, ffmpeg_path):
+    """
+    使用 ffmpeg 推流音频文件。
+
+    :param audio_file_path: 音频文件路径
+    :param ffmpeg_path: ffmpeg.exe 文件路径
+    """
+    # 生成推流命令
+    command = f"{ffmpeg_path} -re -i \"{audio_file_path}\" -f s16le -b:a 128k -ar 48000 -ac 2 pipe:1"
+
+    # 创建子进程
+    process = await asyncio.create_subprocess_shell(
+        command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+
+    return process
 
 # endregion
