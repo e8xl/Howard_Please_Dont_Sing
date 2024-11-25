@@ -9,16 +9,15 @@ About KookAPP Music BOT from [khl.py](https://github.com/TWT233/khl.py)
 ### 音频推流部分来自[Kook_VoiceAPI](https://github.com/e8xl/Kook_VoiceAPI)
 
 ### 网易平台使用[NeteaseCloudMusicApi](https://gitlab.com/Binaryify/neteasecloudmusicapi)
+## 喜大普奔 机器人已经支持网易云音乐点歌功能 等待后续功能完善
 
-#### 代码水平*极差* 大部分使用ChatGPT和前人的作品实现功能 轻喷
 
 ***
 项目名称是因为我的朋友Howard经常喜欢在打游戏的时候激情演唱他喜欢的歌曲  
 而我实在无能为力欣赏他的美妙歌喉 不得已寻找更为方便的点歌机器人 方便我们更为愉快的打游戏  
 因为之前用的[*KO-ON Bot*](https://github.com/Gunale0926/KO-ON-Bot)经常出现一些问题 但由于本人*技术力过低*
 无法查出问题原因  
-不如加上自己喜欢的功能再写一个点歌bot自用（Python真的很简单，现在已经成为了高中必学内容..）
-<br>再加上ChatGPT和各种大佬做好的项目 不如自己学着做一个
+不如加上自己喜欢的功能再写一个点歌bot自用
 <br>非常建议各位 **仔细阅读[khl.py](https://github.com/TWT233/khl.py)的文档内容** 这可以帮助你很多
 ***
 

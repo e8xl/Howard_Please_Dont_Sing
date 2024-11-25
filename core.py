@@ -236,9 +236,8 @@ async def download_music(keyword: str):
         # 加载 Cookie
         cookies = await load_cookies()
         if not cookies:
-            return "未登录，请通知开发者完成登录操作"
+            return {"error": "未登录，请通知开发者完成登录操作"}
 
-        # 使用有效的 Cookie 创建会话
         async with aiohttp.ClientSession(cookies=cookies) as session:
             # 搜索歌曲
             async with session.get(f"http://localhost:3000/search?keywords={keyword}") as resp:
@@ -249,7 +248,7 @@ async def download_music(keyword: str):
                 # 检查搜索结果
                 songs = data.get('result', {}).get('songs', [])
                 if not songs:
-                    return "未找到相关歌曲"
+                    return {"error": "未找到相关歌曲"}
 
                 # 下载逻辑
                 first_song = songs[0]
@@ -257,27 +256,34 @@ async def download_music(keyword: str):
                 song_name = first_song['name']
                 artist_name = ", ".join(artist['name'] for artist in first_song['artists'])
                 album_name = first_song['album']['name']
+                relative_path = "./AudioLib"
+                absolute_path = os.path.abspath(relative_path)
 
                 async with session.get(
                         f"http://localhost:3000/song/download/url/v1?id={song_id}&level=higher") as download_resp:
                     download_data = await download_resp.json()
                     if download_data['code'] != 200 or not download_data['data']['url']:
-                        print("无法获取下载链接")
-                        return "无法获取下载链接，可能需要 VIP 权限"
+                        return {"error": "无法获取下载链接，可能需要 VIP 权限"}
 
                     download_url = download_data['data']['url']
-                    file_name = f"./AudioLib/{song_name} - {artist_name} ({album_name}).mp3"
+                    file_name = os.path.join(absolute_path, f"{song_id}.mp3")
                     os.makedirs(os.path.dirname(file_name), exist_ok=True)
 
                     # 下载文件
+                    file_name = os.path.normpath(file_name)
                     async with session.get(download_url) as music_resp:
                         with open(file_name, 'wb') as f:
                             f.write(await music_resp.read())
-                            print(f"歌曲已下载: {song_name} - {artist_name} ({album_name})")
-                    return (f"歌曲已下载: {song_name} - {artist_name} ({album_name}\n"
-                            f"URL: {download_url}")
+
+                    return {
+                        "file_name": file_name,
+                        "download_url": download_url,
+                        "song_name": song_name,
+                        "artist_name": artist_name,
+                        "album_name": album_name
+                    }
     except Exception as e:
-        return f"发生错误: {e}"
+        return {"error": str(e)}
 
 
 # endregion
@@ -299,7 +305,7 @@ async def get_alive_channel_list():
 
 
 cooldown_tracker = {}
-cooldown_seconds = 5  # 冷却时间（秒）
+cooldown_seconds = 0  # 冷却时间（秒）
 
 
 # 全局CD检查
@@ -328,7 +334,7 @@ async def join_channel(channel_id):
     try:
         # 加入语音频道示例
         join_data = await client.join_channel()
-        return {"success": join_data}
+        return join_data
     except VoiceClientError as e:
         return {"error": str(e)}
     finally:
@@ -362,30 +368,35 @@ def is_bot_in_channel(alive_data, channel_id):
 
 async def keep_channel_alive(channel_id):
     client = KookVoiceClient(token, channel_id)
-    while True:
-        try:
-            await client.keep_alive(channel_id)
-            print(f"保持频道 {channel_id} 活跃成功")
-        except VoiceClientError as e:
-            # 处理错误，例如记录日志或尝试重新连接
-            print(f"保持频道 {channel_id} 活跃时出错: {e}")
-        await asyncio.sleep(40)  # 等待40秒后再次调用
+    try:
+        while True:
+            try:
+                await client.keep_alive(channel_id)
+                print(f"保持频道 {channel_id} 活跃成功")
+            except VoiceClientError as e:
+                # 处理错误，例如记录日志或尝试重新连接
+                print(f"保持频道 {channel_id} 活跃时出错: {e}")
+            await asyncio.sleep(40)  # 等待40秒后再次调用
+    except asyncio.CancelledError:
+        print(f"保持频道 {channel_id} 活动任务被取消")
+    finally:
+        await client.close()
+        print(f"已关闭频道 {channel_id} 的客户端会话")
 
 
 # endregion
 
 # region 推流功能(Test)
-async def search_files(folder_path="AudioLib", search_keyword="", file_extensions=None):
+async def search_files(folder_path="AudioLib", search_keyword=""):
     """
     搜索指定文件夹中符合关键字和文件后缀的文件。
 
     :param folder_path: 要搜索的文件夹路径
     :param search_keyword: 文件名中包含的关键字（部分匹配）
-    :param file_extensions: 文件后缀列表（如['.flac', '.mp3', '.wav']）
     :return: 符合条件的文件路径列表
     """
     result_files = []  # 用于存储符合条件的文件路径
-
+    file_extensions = [".flac", ".mp3", ".wav"]
     # 遍历文件夹及其子文件夹中的所有文件
     for root, dirs, files in os.walk(folder_path):
         # 遍历当前目录下的文件
@@ -400,23 +411,83 @@ async def search_files(folder_path="AudioLib", search_keyword="", file_extension
     return result_files  # 返回符合条件的文件列表
 
 
-async def stream_audio(audio_file_path, ffmpeg_path):
-    """
-    使用 ffmpeg 推流音频文件。
+async def read_stream(stream, callback):
+    buffer = ""
+    while True:
+        chunk = await stream.read(1024)
+        if not chunk:
+            break
+        buffer += chunk.decode(errors='replace')  # 处理可能的解码错误
+        while '\n' in buffer or '\r' in buffer:
+            if '\n' in buffer:
+                line, buffer = buffer.split('\n', 1)
+            elif '\r' in buffer:
+                line, buffer = buffer.split('\r', 1)
+            # noinspection PyUnboundLocalVariable
+            callback(line.strip())
 
-    :param audio_file_path: 音频文件路径
-    :param ffmpeg_path: ffmpeg.exe 文件路径
-    """
-    # 生成推流命令
-    command = f"{ffmpeg_path} -re -i \"{audio_file_path}\" -f s16le -b:a 128k -ar 48000 -ac 2 pipe:1"
 
-    # 创建子进程
-    process = await asyncio.create_subprocess_shell(
-        command,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
-    )
+async def stream_audio(audio_file_path, connection_info):
+    process = None
+    try:
+        bitrate = connection_info.get('bitrate', 32000)  # 默认比特率为 32000
+        bitrate_k = f"{int(bitrate) // 1000}k"  # 格式化比特率，如 32000 -> "32k"
 
-    return process
+        ip = connection_info['ip']
+        port = connection_info['port']
+        ffmpeg_path = set_ffmpeg_path()
 
-# endregion
+        command = [
+            ffmpeg_path,
+            '-loglevel', 'info',  # 增加日志级别
+            '-re',
+            '-i', audio_file_path,
+            '-map', '0:a:0',
+            '-acodec', 'libopus',
+            '-b:a', bitrate_k,
+            '-ac', '2',
+            '-ar', '48000',
+            '-filter:a', 'volume=0.5',
+            '-f', 'tee',
+            f"[select=a:f=rtp:ssrc={connection_info['audio_ssrc']}:payload_type={connection_info['audio_pt']}]rtp://{ip}:{port}?rtcpport={connection_info['rtcp_port']}"
+        ]
+
+        print(f"Executing FFmpeg command: {' '.join(command)}")
+
+        # 创建子进程，启用 stdout 和 stderr 的管道
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        def print_stdout(line):
+            print(f"[STDOUT] {line}")
+
+        def print_stderr(line):
+            print(f"[STDERR] {line}")
+
+        # 创建任务来异步读取 stdout 和 stderr
+        stdout_task = asyncio.create_task(read_stream(process.stdout, print_stdout))
+        stderr_task = asyncio.create_task(read_stream(process.stderr, print_stderr))
+
+        returncode = await process.wait()
+        await asyncio.gather(stdout_task, stderr_task)
+        if returncode != 0:
+            raise RuntimeError(f"FFmpeg 错误 {returncode}")
+        print(f"FFmpeg 成功完成，返回码 {returncode}")
+        return process
+
+    except asyncio.CancelledError:
+        print("Stream task 被取消，正在终止 FFmpeg 进程。")
+        if process:
+            process.terminate()
+            await process.wait()
+        raise  # 重新抛出异常以通知任务被取消
+
+    except Exception as e:
+        print(f"推流过程中发生错误: {e}")
+        if process:
+            process.terminate()
+            await process.wait()
+        raise
