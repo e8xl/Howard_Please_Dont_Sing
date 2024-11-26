@@ -14,6 +14,7 @@ from core import search_files
 from funnyAPI import we, local_hitokoto  # , get_hitokoto
 
 stream_tasks = {}
+keep_alive_tasks: Dict[str, asyncio.Task] = {}
 
 
 def open_file(path: str):
@@ -34,6 +35,7 @@ def get_time():
 
 
 start_time = get_time()
+
 
 # region 逻辑函数部分
 async def exit_channel(target_channel_id, msg=None):
@@ -97,6 +99,8 @@ async def exit_channel(target_channel_id, msg=None):
                 print(f"保持频道 {target_channel_id} 活跃的任务已成功取消。")
             except Exception as e:
                 print(f"取消保持频道 {target_channel_id} 活跃任务时发生错误: {e}")
+
+
 # endregion
 
 
@@ -192,7 +196,7 @@ async def we_command(msg: Message, city: str = "err"):
 
 
 # region 点歌指令操作
-keep_alive_tasks: Dict[str, asyncio.Task] = {}  # 用于存储频道保活任务
+# 用于存储频道保活任务
 
 
 @bot.command(name="play")
@@ -267,7 +271,6 @@ async def exit_command(msg: Message, *args):
     await exit_channel(target_channel_id, msg)
 
 
-
 @bot.command(name="alive")
 async def alive_command(msg: Message):
     try:
@@ -291,8 +294,6 @@ async def ls_command(msg: Message, *args):
     except Exception as e:
         await msg.reply(f"发生错误:{e}")
 
-
-# index.py
 
 @bot.command(name="test")
 async def neteasemusic_stream(msg: Message, *args):
@@ -366,9 +367,14 @@ async def neteasemusic_stream(msg: Message, *args):
             return
 
         # 如果搜索成功，发送歌曲信息
-        await msg.reply(f"{songs}")
+        await msg.reply(
+            f"已经搜索到歌曲：{songs['song_name']} - {songs['artist_name']}({songs['album_name']})\n 正在准备推流进程")
         audio_path = songs['file_name']
-        stream_process = asyncio.create_task(core.stream_audio(audio_file_path=audio_path, connection_info=join_result))
+        await asyncio.sleep(3)
+        a = {'ip': '127.0.0.1', 'port': 6666, 'rtcp_port': 6666,
+             'audio_ssrc': 1111, 'audio_pt': 111, 'bitrate': 128000, 'rtcp_mux': True}
+        # stream_process = asyncio.create_task(core.stream_audio(audio_file_path=audio_path, connection_info=join_result))
+        stream_process = asyncio.create_task(core.stream_audio(audio_file_path=audio_path, connection_info=a))
         stream_tasks[target_channel_id] = stream_process
 
         # 创建一个后台任务来监测推流任务的完成
@@ -378,9 +384,9 @@ async def neteasemusic_stream(msg: Message, *args):
             except asyncio.CancelledError:
                 # 任务被取消，不需要执行退出逻辑
                 return
-            except Exception as e:
-                # 推流任务出现异常，已经在 stream_audio 中处理
-                return e
+            # except Exception as e:
+            #     # 推流任务出现异常，已经在 stream_audio 中处理
+            #     return e
             finally:
                 # 推流任务完成后，退出频道
                 await exit_channel(target_channel_id, msg)
@@ -398,7 +404,6 @@ async def neteasemusic_stream(msg: Message, *args):
         if 'target_channel_id' in locals():
             # noinspection PyUnboundLocalVariable
             await exit_channel(target_channel_id, msg)
-
 
 
 # endregion

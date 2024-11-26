@@ -23,7 +23,7 @@ class KookVoiceClient:
     Kook App Voice API
     """
 
-    def __init__(self, token, channel_id = None):
+    def __init__(self, token, channel_id=None):
         self.token = token
         self.channel_id = channel_id
         self.base_url = "https://www.kookapp.cn/api/v3"
