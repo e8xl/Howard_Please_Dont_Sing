@@ -10,8 +10,34 @@ import aiohttp
 from khl import Bot, Message
 from khl.card import Card, CardMessage, Element, Module, Types
 
-with open('./config/config.json', 'r', encoding='utf-8') as f:
-    config = json.load(f)
+
+def open_file(path: str):
+    # 检查文件是否存在
+    if not os.path.exists(path):
+        print(f"错误: 文件 '{path}' 不存在。")
+        return None
+
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            tmp = json.load(f)
+        return tmp
+    except FileNotFoundError:
+        print(f"错误: 文件 '{path}' 找不到。")
+        return None
+    except json.JSONDecodeError:
+        print(f"错误: 文件 '{path}' 包含无效的 JSON 格式。")
+        return None
+    except Exception as e:
+        print(f"发生了一个意外错误: {e}")
+        return None
+
+
+# 打开config.json并进行检测
+config = open_file('./config/config.json')
+if config is None:
+    # 文件不存在或加载出错时，停止程序
+    print("加载配置文件失败，程序退出。")
+    exit(1)  # 或者使用 break 来终止循环或程序
 
 bot = Bot(token=config['token'])
 

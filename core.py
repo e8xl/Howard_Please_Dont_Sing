@@ -8,16 +8,38 @@ import aiohttp
 from qrcode.main import QRCode
 
 from VoiceAPI import KookVoiceClient, VoiceClientError
+from client_manager import get_client, remove_client
 
 
 # region 环境配置部分
 def open_file(path: str):
-    with open(path, 'r', encoding='utf-8') as f:
-        tmp = json.load(f)
-    return tmp
+    # 检查文件是否存在
+    if not os.path.exists(path):
+        print(f"错误: 文件 '{path}' 不存在。")
+        return None
+
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            tmp = json.load(f)
+        return tmp
+    except FileNotFoundError:
+        print(f"错误: 文件 '{path}' 找不到。")
+        return None
+    except json.JSONDecodeError:
+        print(f"错误: 文件 '{path}' 包含无效的 JSON 格式。")
+        return None
+    except Exception as e:
+        print(f"发生了一个意外错误: {e}")
+        return None
 
 
+# 打开config.json并进行检测
 config = open_file('./config/config.json')
+if config is None:
+    # 文件不存在或加载出错时，停止程序
+    print("加载配置文件失败，程序退出。")
+    exit(1)  # 或者使用 break 来终止循环或程序
+
 token = config['token']
 
 
@@ -289,7 +311,6 @@ async def download_music(keyword: str):
 # endregion
 
 # region 点歌功能部分
-keep_alive_tasks = {}
 
 
 async def get_alive_channel_list():
@@ -325,39 +346,10 @@ def check_cooldown(channel_id):
     return None  # 没有冷却限制
 
 
-async def join_channel(channel_id):
-    wait_cd = check_cooldown(channel_id)
-    if wait_cd is not None:
-        return {"error": f"请等待 {wait_cd:.2f} 秒后使用"}
-
-    client = KookVoiceClient(token, channel_id)
-    try:
-        # 加入语音频道示例
-        join_data = await client.join_channel()
-        return join_data
-    except VoiceClientError as e:
-        return {"error": str(e)}
-    finally:
-        await client.close()
-
-
-async def leave_channel(channel_id):
-    wait_cd = check_cooldown(channel_id)
-    if wait_cd is not None:
-        return {"error": f"请等待 {wait_cd:.2f} 秒后使用"}
-
-    client = KookVoiceClient(token, channel_id)
-    try:
-        # 离开语音频道示例
-        leave_data = await client.leave_channel()
-        return {"success": leave_data}
-    except VoiceClientError as e:
-        return {"error": str(e)}
-    finally:
-        await client.close()
-
-
 def is_bot_in_channel(alive_data, channel_id):
+    """
+    判断机器人是否在指定的频道中。
+    """
     if 'error' in alive_data:
         return False, alive_data['error']
     for item in alive_data.get('items', []):
@@ -366,21 +358,67 @@ def is_bot_in_channel(alive_data, channel_id):
     return False, None
 
 
+async def join_channel(channel_id):
+    """
+    加入指定的语音频道。
+    """
+    wait_cd = check_cooldown(channel_id)
+    if wait_cd is not None:
+        return {"error": f"请等待 {wait_cd:.2f} 秒后使用"}
+
+    client = await get_client(channel_id, token)
+    try:
+        join_data = await client.join_channel()
+        return join_data
+    except VoiceClientError as e:
+        return {"error": str(e)}
+    # 不在这里关闭客户端，因为可能还需要保持活跃状态
+
+
+async def leave_channel(channel_id):
+    """
+    离开指定的语音频道。
+    """
+    wait_cd = check_cooldown(channel_id)
+    if wait_cd is not None:
+        return {"error": f"请等待 {wait_cd:.2f} 秒后使用"}
+
+    # 通过获取活跃频道列表来判断机器人是否在频道中
+    alive_data = await get_alive_channel_list()
+    is_in_channel, error = is_bot_in_channel(alive_data, channel_id)
+    if error:
+        return {"error": error}
+    if not is_in_channel:
+        return {"error": "机器人未在该频道"}
+
+    # 使用临时客户端来离开频道，不依赖于 client_manager 的客户端实例
+    temp_client = KookVoiceClient(token)
+    try:
+        leave_data = await temp_client.leave_channel(channel_id)
+        return {"success": leave_data}
+    except VoiceClientError as e:
+        return {"error": str(e)}
+    finally:
+        await temp_client.close()
+
+
 async def keep_channel_alive(channel_id):
-    client = KookVoiceClient(token, channel_id)
+    """
+    保持指定频道的活跃状态。
+    """
+    client = await get_client(channel_id, token)
     try:
         while True:
             try:
                 await client.keep_alive(channel_id)
                 print(f"保持频道 {channel_id} 活跃成功")
             except VoiceClientError as e:
-                # 处理错误，例如记录日志或尝试重新连接
                 print(f"保持频道 {channel_id} 活跃时出错: {e}")
             await asyncio.sleep(40)  # 等待40秒后再次调用
     except asyncio.CancelledError:
         print(f"保持频道 {channel_id} 活动任务被取消")
     finally:
-        await client.close()
+        await remove_client(channel_id)
         print(f"已关闭频道 {channel_id} 的客户端会话")
 
 
@@ -453,7 +491,7 @@ async def stream_audio(audio_file_path, connection_info):
         ]
 
         print(f"Executing FFmpeg command: {' '.join(command)}")
-
+        await asyncio.sleep(5)
         # 创建子进程，启用 stdout 和 stderr 的管道
         process = await asyncio.create_subprocess_exec(
             *command,
