@@ -11,6 +11,7 @@ keep_alive_tasks = {}
 
 # 全局字典来管理推流任务
 stream_tasks = {}
+stream_monitor_tasks = {}
 
 
 async def get_client(channel_id, token):

@@ -1,6 +1,7 @@
 # core.py
 import asyncio
 import json
+import logging
 import os
 import time
 
@@ -52,6 +53,7 @@ def set_ffmpeg_path():
 
 
 # endregion
+
 # region 网易API部分
 async def search_netease_music(keyword: str):
     # aiohttp调用网易云音乐API localhost:3000/search?keywords=keyword
@@ -310,7 +312,7 @@ async def download_music(keyword: str):
 
 # endregion
 
-# region 点歌功能部分
+# region VoiceAPI调用配置（加入频道退出频道等）
 
 
 async def get_alive_channel_list():
@@ -368,7 +370,7 @@ async def join_channel(channel_id):
 
     client = await get_client(channel_id, token)
     try:
-        join_data = await client.join_channel()
+        join_data = await client.join_channel(rtcp_mux=False)  # 将rtcp_mux设置为False 防止推流失败
         return join_data
     except VoiceClientError as e:
         return {"error": str(e)}
@@ -424,7 +426,7 @@ async def keep_channel_alive(channel_id):
 
 # endregion
 
-# region 推流功能(Test)
+# region 推流搜索功能(Test)
 async def search_files(folder_path="AudioLib", search_keyword=""):
     """
     搜索指定文件夹中符合关键字和文件后缀的文件。
@@ -447,85 +449,136 @@ async def search_files(folder_path="AudioLib", search_keyword=""):
                     result_files.append(os.path.join(root, music_name))
 
     return result_files  # 返回符合条件的文件列表
+# endregion
+
+# region 推流功能类
+logger = logging.getLogger(__name__)
 
 
-async def read_stream(stream, callback):
-    buffer = ""
-    while True:
-        chunk = await stream.read(1024)
-        if not chunk:
-            break
-        buffer += chunk.decode(errors='replace')  # 处理可能的解码错误
-        while '\n' in buffer or '\r' in buffer:
-            if '\n' in buffer:
-                line, buffer = buffer.split('\n', 1)
-            elif '\r' in buffer:
-                line, buffer = buffer.split('\r', 1)
-            # noinspection PyUnboundLocalVariable
-            callback(line.strip())
+# noinspection PyMethodMayBeStatic,PyAsyncCall
+class AudioStreamer:
+    def __init__(self, audio_file_path, connection_info):
+        self.audio_file_path = audio_file_path
+        self.connection_info = connection_info
+        self.process = None
+        self.stdout_task = None
+        self.stderr_task = None
+        self._stopped = asyncio.Event()
+        self._stopping = False  # 标记是否正在停止
 
+    async def start(self):
+        if self.process:
+            raise RuntimeError("AudioStreamer 已经在运行。")
 
-async def stream_audio(audio_file_path, connection_info):
-    process = None
-    try:
-        bitrate = connection_info.get('bitrate', 32000)  # 默认比特率为 32000
-        bitrate_k = f"{int(bitrate) // 1000}k"  # 格式化比特率，如 32000 -> "32k"
+        try:
+            bitrate = self.connection_info.get('bitrate', 32000)
+            bitrate_k = f"{int(bitrate) * 1.15 // 1000}k"  # 乘以1.15是为了避免音频质量损失
 
-        ip = connection_info['ip']
-        port = connection_info['port']
-        ffmpeg_path = set_ffmpeg_path()
+            ip = self.connection_info['ip']
+            port = self.connection_info['port']
+            ffmpeg_path = set_ffmpeg_path()  # 确保这个函数已定义
 
-        command = [
-            ffmpeg_path,
-            '-loglevel', 'info',  # 增加日志级别
-            '-re',
-            '-i', audio_file_path,
-            '-map', '0:a:0',
-            '-acodec', 'libopus',
-            '-b:a', bitrate_k,
-            '-ac', '2',
-            '-ar', '48000',
-            '-filter:a', 'volume=0.5',
-            '-f', 'tee',
-            f"[select=a:f=rtp:ssrc={connection_info['audio_ssrc']}:payload_type={connection_info['audio_pt']}]rtp://{ip}:{port}?rtcpport={connection_info['rtcp_port']}"
-        ]
+            command = [
+                ffmpeg_path,
+                '-loglevel', 'info',
+                '-re',
+                '-i', self.audio_file_path,
+                '-map', '0:a:0',
+                '-acodec', 'libopus',
+                '-b:a', bitrate_k,
+                '-ac', '2',
+                '-ar', '48000',
+                '-filter:a', 'volume=0.5',
+                '-f', 'tee',
+                f"[select=a:f=rtp:ssrc={self.connection_info['audio_ssrc']}:payload_type={self.connection_info['audio_pt']}]rtp://{ip}:{port}?rtcpport={self.connection_info['rtcp_port']}"
+            ]
 
-        print(f"Executing FFmpeg command: {' '.join(command)}")
-        await asyncio.sleep(5)
-        # 创建子进程，启用 stdout 和 stderr 的管道
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
+            logger.info(f"FFmpeg command: {' '.join(command)}")
+            await asyncio.sleep(3)
 
-        def print_stdout(line):
-            print(f"[STDOUT] {line}")
+            self.process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
 
-        def print_stderr(line):
-            print(f"[STDERR] {line}")
+            self.stdout_task = asyncio.create_task(self._read_stream(self.process.stdout, self._print_stdout))
+            self.stderr_task = asyncio.create_task(self._read_stream(self.process.stderr, self._print_stderr))
 
-        # 创建任务来异步读取 stdout 和 stderr
-        stdout_task = asyncio.create_task(read_stream(process.stdout, print_stdout))
-        stderr_task = asyncio.create_task(read_stream(process.stderr, print_stderr))
+            asyncio.create_task(self._wait_process())
 
-        returncode = await process.wait()
-        await asyncio.gather(stdout_task, stderr_task)
-        if returncode != 0:
-            raise RuntimeError(f"FFmpeg 错误 {returncode}")
-        print(f"FFmpeg 成功完成，返回码 {returncode}")
-        return process
+        except Exception as e:
+            logger.error(f"启动音频流时发生错误: {e}")
+            await self.stop()
+            raise
 
-    except asyncio.CancelledError:
-        print("Stream task 被取消，正在终止 FFmpeg 进程。")
-        if process:
-            process.terminate()
-            await process.wait()
-        raise  # 重新抛出异常以通知任务被取消
+    async def _wait_process(self):
+        try:
+            returncode = await self.process.wait()
+            await asyncio.gather(self.stdout_task, self.stderr_task)
+            if returncode != 0 and not self._stopping:
+                logger.error(f"FFmpeg 进程以错误码 {returncode} 结束。")
+                raise RuntimeError(f"FFmpeg 错误 {returncode}")
+            else:
+                logger.info(f"FFmpeg 成功完成，返回码 {returncode}")
+        except asyncio.CancelledError:
+            logger.info("等待 FFmpeg 进程结束的任务被取消。")
+        except Exception as e:
+            logger.error(f"等待 FFmpeg 进程结束时发生错误: {e}")
 
-    except Exception as e:
-        print(f"推流过程中发生错误: {e}")
-        if process:
-            process.terminate()
-            await process.wait()
-        raise
+    async def stop(self):
+        if self.process and self.process.returncode is None:
+            logger.info("正在终止 FFmpeg 进程。")
+            self._stopping = True
+            self.process.terminate()
+            try:
+                await asyncio.wait_for(self.process.wait(), timeout=5)
+                logger.info("FFmpeg 进程已终止。")
+            except asyncio.TimeoutError:
+                logger.warning("FFmpeg 进程未能及时终止，强制杀死进程。")
+                self.process.kill()
+                await self.process.wait()
+            finally:
+                self.process = None
+
+        if self.stdout_task:
+            self.stdout_task.cancel()
+            try:
+                await self.stdout_task
+            except asyncio.CancelledError:
+                pass
+
+        if self.stderr_task:
+            self.stderr_task.cancel()
+            try:
+                await self.stderr_task
+            except asyncio.CancelledError:
+                pass
+
+        self._stopped.set()
+
+    async def _read_stream(self, stream, callback):
+        try:
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                callback(line.decode().rstrip())
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"读取流时发生错误: {e}")
+
+    def _print_stdout(self, line):
+        logger.info(f"[STDOUT] {line}")
+
+    def _print_stderr(self, line):
+        logger.error(f"[STDERR] {line}")
+
+    async def __aenter__(self):
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.stop()
+# endregion
