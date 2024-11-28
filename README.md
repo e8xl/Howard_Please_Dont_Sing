@@ -1,14 +1,15 @@
 # Howard Please Don't Sing
 
-8XL_Kook_Music_bot<br>
+8XL_Kook_Music_bot  
 About KookAPP Music BOT from [khl.py](https://github.com/TWT233/khl.py)
 ***
 
-## 部分娱乐功能参照并修改自[Kook-Valorant-Bot](https://github.com/Valorant-Shop-CN/Kook-Valorant-Bot)<br>机器人功能主体来自[khl.py](https://github.com/TWT233/khl.py)
+### 部分娱乐功能参照并修改自[Kook-Valorant-Bot](https://github.com/Valorant-Shop-CN/Kook-Valorant-Bot)<br>机器人功能主体来自[khl.py](https://github.com/TWT233/khl.py)
 ### 当前机器人仅限Windows环境运行（核心问题就是二维码的生成扫描）<br>Linux环境请自行修改代码
 ### 音频推流部分来自[Kook_VoiceAPI](https://github.com/e8xl/Kook_VoiceAPI)
+### 非常感谢「KOOK」开发者中心 的各位大佬们的帮助 难以言表感激之情！
+### 网易平台API使用[NeteaseCloudMusicApi](https://gitlab.com/Binaryify/neteasecloudmusicapi)  
 
-### 网易平台使用[NeteaseCloudMusicApi](https://gitlab.com/Binaryify/neteasecloudmusicapi)
 ## 喜大普奔 机器人已经支持网易云音乐点歌功能 等待后续功能完善
 
 
@@ -17,8 +18,8 @@ About KookAPP Music BOT from [khl.py](https://github.com/TWT233/khl.py)
 而我实在无能为力欣赏他的美妙歌喉 不得已寻找更为方便的点歌机器人 方便我们更为愉快的打游戏  
 因为之前用的[*KO-ON Bot*](https://github.com/Gunale0926/KO-ON-Bot)经常出现一些问题 但由于本人*技术力过低*
 无法查出问题原因  
-不如加上自己喜欢的功能再写一个点歌bot自用
-<br>非常建议各位 **仔细阅读[khl.py](https://github.com/TWT233/khl.py)的文档内容** 这可以帮助你很多
+不如加上自己喜欢的功能再写一个点歌bot自用  
+非常建议各位 **仔细阅读[khl.py](https://github.com/TWT233/khl.py)的文档内容** 这可以帮助你很多
 ***
 
 ## 机器人频道内指令前缀
@@ -56,22 +57,24 @@ Tools
 }
 ```
 
-3. 运行 Setup&Run_NeteaseAPI(Test).py 完成API的依赖安装和运行
+3. 运行 Setup&Run_NeteaseAPI(Test).py 完成API的依赖安装和运行  
+↑基本上没什么问题 但不保证所有系统都能操作成功 若失败请自行解决API问题  
+代码的推流逻辑并不需要API支持 但机器人的点歌功能依赖了API返回的数据
 ### 或者等机器人完成全部功能后在release中下载携带环境的版本
 
 ---
 
 ### 主机器人使用方法
 
-1.git本项目到本地
+1. git本项目到本地
 
-2.安装依赖
+2. 安装依赖
 
 ```shell
 pip install -r requirements.txt
 ```
 
-3.在项目文件夹内创建config文件夹 并于其中添加config.json文件 格式如下\
+3. 在项目文件夹内创建config文件夹 并于其中添加config.json文件 格式如下\
 amap_api_key为高德地图API 需自行申请 即可使用/we 天气功能
 
 ```json
@@ -81,17 +84,23 @@ amap_api_key为高德地图API 需自行申请 即可使用/we 天气功能
 }
 ```
 
-4.运行index.py
+4. 运行index.py
 
 ```shell
 python index.py
+```
+
+5. 机器人成功运行后在频道内输入指令
+
+```shell
+帮助
 ```
 
 ## 小工具
 
 ### 机器人状态
 
-***你也可以用更简单的办法 这样比较麻烦但很直观 所有操作都是GUI形式的***<br>
+***你也可以用更简单的办法 这样比较麻烦但很直观 所有操作都是GUI形式的***  
 
 在脚本目录Tools文件夹内CreateGame.py内运行运行机器人状态生成器<br>
 需要提前配置config文件保证token正确 机器人可以正常运行
