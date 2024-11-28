@@ -88,6 +88,7 @@ async def menu(msg: Message):
     c3.append(
         Module.Section('帮我Github点个Star吧~', Element.Button('让我看看', 'https://www.8xl.icu', Types.Click.LINK)))
     c3.append(Module.Section('赞助一下吧~', Element.Button("赞助一下", 'https://afdian.com/a/888xl', Types.Click.LINK)))
+    c3.append(Module.Section('加入服务器反馈BUG（积极反馈 球球了）', Element.Button("加入服务器", 'https://kook.vip/fYM28v', Types.Click.LINK)))
     """
     在线一言API会导致菜单响应速度过慢 参考服务器与API调用所影响 可以删除下面c3.append到KMD)))
     """
