@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from khl import Bot, Message
 from khl.card import Card, CardMessage, Element, Module, Types
 
+import NeteaseAPI
 import core
 from client_manager import keep_alive_tasks, stream_tasks, stream_monitor_tasks
 from core import search_files
@@ -88,7 +89,8 @@ async def menu(msg: Message):
     c3.append(
         Module.Section('帮我Github点个Star吧~', Element.Button('让我看看', 'https://www.8xl.icu', Types.Click.LINK)))
     c3.append(Module.Section('赞助一下吧~', Element.Button("赞助一下", 'https://afdian.com/a/888xl', Types.Click.LINK)))
-    c3.append(Module.Section('加入服务器反馈BUG（积极反馈 球球了）', Element.Button("加入服务器", 'https://kook.vip/fYM28v', Types.Click.LINK)))
+    c3.append(Module.Section('加入服务器反馈BUG（积极反馈 球球了）',
+                             Element.Button("加入服务器", 'https://kook.vip/fYM28v', Types.Click.LINK)))
     """
     在线一言API会导致菜单响应速度过慢 参考服务器与API调用所影响 可以删除下面c3.append到KMD)))
     """
@@ -251,7 +253,7 @@ async def exit_command(msg: Message, *args):
         if streamer:
             try:
                 await streamer.stop()
-                await msg.reply(f"已停止推流并取消相关任务: {target_channel_id}")
+                # await msg.reply(f"已停止推流并取消相关任务: {target_channel_id}")
             except Exception as e:
                 logger.error(f"停止推流任务时发生错误: {e}")
                 try:
@@ -344,7 +346,7 @@ async def neteasemusic_stream(msg: Message, *args):
             await msg.reply(f"加入频道失败: {join_result['error']}\n请反馈开发者")
             return
         else:
-            await msg.reply(f"点歌成功！ID: {target_channel_id}")
+            await msg.reply(f"加入频道成功！ID: {target_channel_id}")
             if target_channel_id not in keep_alive_tasks:
                 task = asyncio.create_task(core.keep_channel_alive(target_channel_id))
                 keep_alive_tasks[target_channel_id] = task
@@ -354,7 +356,7 @@ async def neteasemusic_stream(msg: Message, *args):
         await msg.reply(f"正在搜索关键字: {keyword}")
 
         # 执行音乐搜索
-        songs = await core.download_music(keyword)
+        songs = await NeteaseAPI.download_music(keyword)
 
         # 检查搜索结果是否为错误消息
         if "error" in songs:
@@ -389,19 +391,19 @@ async def neteasemusic_stream(msg: Message, *args):
             except asyncio.CancelledError:
                 # 任务被取消，不需要执行退出逻辑
                 return
-            except Exception as e:
+            except Exception as error1:
                 # 推流任务出现异常，已经在 AudioStreamer 中处理
-                print(f"监测到推流任务异常: {e}")
+                print(f"监测到推流任务异常: {error1}")
             finally:
                 # 推流任务完成后，退出频道
                 await asyncio.sleep(3)  # 等待3秒后退出频道
-                leave_result = await core.leave_channel(target_channel_id)
-                if 'error' not in leave_result:
+                leaveing_result = await core.leave_channel(target_channel_id)
+                if 'error' not in leaveing_result:
                     # 取消保持活跃任务
-                    task = keep_alive_tasks.pop(target_channel_id, None)
-                    if task:
-                        task.cancel()
-                await msg.reply(f"已完成推流并退出频道: {target_channel_id}")
+                    task1 = keep_alive_tasks.pop(target_channel_id, None)
+                    if task1:
+                        task1.cancel()
+                # await msg.reply(f"已完成推流并退出频道: {target_channel_id}")
                 # 从 stream_tasks 中移除 streamer 实例
                 stream_tasks.pop(target_channel_id, None)
                 # 从 stream_monitor_tasks 中移除 monitor_stream 任务
@@ -440,7 +442,7 @@ async def s1_command(msg: Message, *args):
 
         keyword = " ".join(args)  # 把空格后的所有内容拼接成一个字符串
         await msg.reply(f"正在搜索关键字: {keyword}")
-        songs = await core.search_netease_music(keyword)
+        songs = await NeteaseAPI.search_netease_music(keyword)
 
         cm = CardMessage()
         c3 = Card(
@@ -471,7 +473,7 @@ async def download(msg: Message, *args):
             # await core.qrcode_login()
             keyword = " ".join(args)  # 把空格后的所有内容拼接成一个字符串
             await msg.reply(f"正在搜索关键字: {keyword}")
-            songs = await core.download_music(keyword)
+            songs = await NeteaseAPI.download_music(keyword)
             if "error" in songs:
                 await msg.reply(f"发生错误: {songs['error']}")
                 return
@@ -487,7 +489,7 @@ async def download(msg: Message, *args):
 async def login(msg: Message):
     try:
         await msg.reply("正在登录，请开发者查看机器人后台")
-        await core.qrcode_login()
+        await NeteaseAPI.qrcode_login()
     except Exception as e:
         await msg.reply(f"发生错误: {e}")
 
@@ -496,7 +498,7 @@ async def login(msg: Message):
 @bot.command(name='check')
 async def check(msg: Message):
     try:
-        a = await core.ensure_logged_in()
+        a = await NeteaseAPI.ensure_logged_in()
         await msg.reply(a)
     except Exception as e:
         await msg.reply(f"发生错误: {e}")

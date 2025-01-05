@@ -10,7 +10,15 @@ About KookAPP Music BOT from [khl.py](https://github.com/TWT233/khl.py)
 ### 非常感谢「KOOK」开发者中心 的各位大佬们的帮助 难以言表感激之情！
 ### 网易平台API使用[NeteaseCloudMusicApi](https://gitlab.com/Binaryify/neteasecloudmusicapi)  
 
-## 喜大普奔 机器人已经支持网易云音乐点歌功能 等待后续功能完善
+---
+# To-Do List
+
+## 📝 Pending Tasks
+- [ ] 多文件（歌单列表）多频道推流功能
+- [ ] 内存控制 对AudioLib的数据大小控制
+
+## ✅ Completed Tasks
+- [x] 多频道单文件独立推流功能
 
 
 ***
@@ -24,10 +32,11 @@ About KookAPP Music BOT from [khl.py](https://github.com/TWT233/khl.py)
 
 ## 机器人频道内指令前缀
 
-代码内出现了部分用"/"为前缀的文字示例 仅为演示作用<br>代码最后已经修改了指令前缀为空 请自行修改满足需求
+代码内出现了部分用"/"为前缀的文字示例 仅为演示作用  
+代码最后已经修改了指令前缀为空 请自行修改满足需求
 
 ```shell
-bot.command.update_prefixes("")  # 修改引号内的内容为你的指令前缀 留空则无前缀 直接输入指令
+bot.command.update_prefixes(".")  # 修改引号内的内容为你的指令前缀 留空则无前缀 直接输入指令
 ```
 
 ---
