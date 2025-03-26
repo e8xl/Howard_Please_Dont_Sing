@@ -355,10 +355,38 @@ async def neteasemusic_stream(msg: Message, *args):
         keyword = " ".join(args)
         await msg.reply(f"正在搜索关键字: {keyword}")
 
-        # 执行音乐搜索
-        songs = await NeteaseAPI.download_music(keyword)
+        # 使用search_netease_music进行搜索，然后获取第一首歌曲信息
+        try:
+            search_results = await NeteaseAPI.search_netease_music(keyword)
+            if search_results == "未找到相关音乐":
+                await msg.reply("未找到相关音乐")
+                # 尝试退出频道
+                leave_result = await core.leave_channel(target_channel_id)
+                if 'error' not in leave_result:
+                    # 取消保持活跃任务
+                    task = keep_alive_tasks.pop(target_channel_id, None)
+                    if task:
+                        task.cancel()
+                return
+                
+            # 使用第一首搜索结果的歌曲下载
+            first_song = search_results.split('\n')[0]
+            await msg.reply(f"已找到歌曲：{first_song}，准备下载...")
+            
+            # 下载音乐
+            songs = await NeteaseAPI.download_music(first_song)
+        except Exception as e:
+            await msg.reply(f"搜索或下载过程中发生错误: {e}")
+            # 尝试退出频道
+            leave_result = await core.leave_channel(target_channel_id)
+            if 'error' not in leave_result:
+                # 取消保持活跃任务
+                task = keep_alive_tasks.pop(target_channel_id, None)
+                if task:
+                    task.cancel()
+            return
 
-        # 检查搜索结果是否为错误消息
+        # 检查下载结果是否为错误消息
         if "error" in songs:
             await msg.reply(f"发生错误: {songs['error']}")
             # 尝试退出频道
@@ -370,9 +398,9 @@ async def neteasemusic_stream(msg: Message, *args):
                     task.cancel()
             return
 
-        # 如果搜索成功，发送歌曲信息
+        # 如果下载成功，发送歌曲信息
         await msg.reply(
-            f"已经搜索到歌曲：\n{songs['song_name']} - {songs['artist_name']}({songs['album_name']})\n正在准备推流进程")
+            f"已准备播放：\n{songs['song_name']} - {songs['artist_name']}({songs['album_name']})\n正在准备推流进程")
         audio_path = songs['file_name']
         await asyncio.sleep(3)
 
@@ -502,6 +530,173 @@ async def check(msg: Message):
         await msg.reply(a)
     except Exception as e:
         await msg.reply(f"发生错误: {e}")
+
+
+# 对指定频道点歌
+@bot.command(name="pc")
+async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
+    if not song_name or not channel_id:
+        await msg.reply("参数缺失，请提供歌名和频道ID，格式：pc \"歌名\" \"频道ID\"")
+        return
+
+    try:
+        # 使用提供的频道ID
+        target_channel_id = channel_id.strip()
+        
+        # 获取当前活跃频道列表
+        alive_data = await core.get_alive_channel_list()
+        if 'error' in alive_data:
+            await msg.reply(f"获取频道列表时发生错误: {alive_data['error']}")
+            return
+
+        # 检测机器人是否已在目标频道
+        is_in_channel, error = core.is_bot_in_channel(alive_data, target_channel_id)
+        if error:
+            await msg.reply(f"检查频道状态时发生错误: {error}")
+            return
+
+        if is_in_channel:
+            # 检查是否有正在进行的推流任务
+            streamer = stream_tasks.get(target_channel_id)
+            if streamer:
+                await streamer.stop()  # 停止推流
+                stream_tasks.pop(target_channel_id, None)  # 移除任务
+
+            # 检查并取消之前的 monitor_stream 任务
+            monitor_task = stream_monitor_tasks.get(target_channel_id)
+            if monitor_task:
+                monitor_task.cancel()
+                stream_monitor_tasks.pop(target_channel_id, None)
+
+            # 机器人已在目标频道，尝试离开
+            leave_result = await core.leave_channel(target_channel_id)
+            if 'error' in leave_result:
+                await msg.reply(f"尝试离开频道时发生错误: {leave_result['error']}")
+                return
+            # 确认已离开
+            alive_data = await core.get_alive_channel_list()
+            is_in_channel, error = core.is_bot_in_channel(alive_data, target_channel_id)
+            if is_in_channel:
+                await msg.reply("离开频道失败，请稍后再试。")
+                return
+            elif error:
+                await msg.reply(f"检查频道状态时发生错误: {error}")
+                return
+
+        # 尝试加入目标频道
+        join_result = await core.join_channel(target_channel_id)
+        if 'error' in join_result:
+            await msg.reply(f"加入频道失败: {join_result['error']}\n请反馈开发者")
+            return
+        else:
+            await msg.reply(f"加入频道成功！ID: {target_channel_id}")
+            if target_channel_id not in keep_alive_tasks:
+                task = asyncio.create_task(core.keep_channel_alive(target_channel_id))
+                keep_alive_tasks[target_channel_id] = task
+
+        # 进行歌曲搜索
+        await msg.reply(f"正在搜索歌曲: {song_name}")
+
+        # 使用search_netease_music进行搜索，然后获取第一首歌曲信息
+        try:
+            search_results = await NeteaseAPI.search_netease_music(song_name)
+            if search_results == "未找到相关音乐":
+                await msg.reply("未找到相关音乐")
+                # 尝试退出频道
+                leave_result = await core.leave_channel(target_channel_id)
+                if 'error' not in leave_result:
+                    # 取消保持活跃任务
+                    task = keep_alive_tasks.pop(target_channel_id, None)
+                    if task:
+                        task.cancel()
+                return
+                
+            # 使用第一首搜索结果的歌曲下载
+            first_song = search_results.split('\n')[0]
+            await msg.reply(f"已找到歌曲：{first_song}，准备下载...")
+            
+            # 下载音乐
+            songs = await NeteaseAPI.download_music(first_song)
+        except Exception as e:
+            await msg.reply(f"搜索或下载过程中发生错误: {e}")
+            # 尝试退出频道
+            leave_result = await core.leave_channel(target_channel_id)
+            if 'error' not in leave_result:
+                # 取消保持活跃任务
+                task = keep_alive_tasks.pop(target_channel_id, None)
+                if task:
+                    task.cancel()
+            return
+
+        # 检查下载结果是否为错误消息
+        if "error" in songs:
+            await msg.reply(f"发生错误: {songs['error']}")
+            # 尝试退出频道
+            leave_result = await core.leave_channel(target_channel_id)
+            if 'error' not in leave_result:
+                # 取消保持活跃任务
+                task = keep_alive_tasks.pop(target_channel_id, None)
+                if task:
+                    task.cancel()
+            return
+
+        # 如果下载成功，发送歌曲信息
+        await msg.reply(
+            f"已准备在频道 {target_channel_id} 播放：\n{songs['song_name']} - {songs['artist_name']}({songs['album_name']})\n正在准备推流进程")
+        audio_path = songs['file_name']
+        await asyncio.sleep(3)
+
+        # 使用 AudioStreamer 类进行推流
+        streamer = core.AudioStreamer(audio_file_path=audio_path, connection_info=join_result)
+        await streamer.start()
+
+        # 将 streamer 实例存储在 stream_tasks 中
+        stream_tasks[target_channel_id] = streamer
+
+        # 创建一个后台任务来监测推流任务的完成
+        async def monitor_stream():
+            try:
+                # 等待推流进程完成
+                await streamer.process.wait()
+            except asyncio.CancelledError:
+                # 任务被取消，不需要执行退出逻辑
+                return
+            except Exception as error1:
+                # 推流任务出现异常，已经在 AudioStreamer 中处理
+                print(f"监测到推流任务异常: {error1}")
+            finally:
+                # 推流任务完成后，退出频道
+                await asyncio.sleep(3)  # 等待3秒后退出频道
+                leaveing_result = await core.leave_channel(target_channel_id)
+                if 'error' not in leaveing_result:
+                    # 取消保持活跃任务
+                    task1 = keep_alive_tasks.pop(target_channel_id, None)
+                    if task1:
+                        task1.cancel()
+                # 从 stream_tasks 中移除 streamer 实例
+                stream_tasks.pop(target_channel_id, None)
+                # 从 stream_monitor_tasks 中移除 monitor_stream 任务
+                stream_monitor_tasks.pop(target_channel_id, None)
+
+        # 创建并存储 monitor_stream 任务
+        monitor_task = asyncio.create_task(monitor_stream())
+        stream_monitor_tasks[target_channel_id] = monitor_task
+
+    except asyncio.CancelledError:
+        # 处理被取消的任务
+        await msg.reply("任务已被取消。")
+    except Exception as e:
+        # 捕获其他预期外的异常
+        await msg.reply(f"发生错误: {e}")
+        # 尝试退出频道
+        if 'target_channel_id' in locals():
+            # noinspection PyUnboundLocalVariable
+            leave_result = await core.leave_channel(target_channel_id)
+            if 'error' not in leave_result:
+                # 取消保持活跃任务
+                task = keep_alive_tasks.pop(target_channel_id, None)
+                if task:
+                    task.cancel()
 
 
 # endregion

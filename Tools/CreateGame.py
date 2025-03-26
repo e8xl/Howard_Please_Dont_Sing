@@ -22,7 +22,7 @@ async def game_create_cmd(msg: Message, name: str, icon=None):
     try:
         print("get /game-c cmd")
         # 处理 icon
-        if icon is not None and 'http' in icon:
+        if icon != None and 'http' in icon:
             # 从命令行获取到的url，是kmd格式的，[url](url)，我们需要取出其中一个完整的url
             # 否则无法获取到图片，报错 Requesting 'POST game/create' failed with 40000: 无法获取文件信息
             index = icon.find('](')
@@ -38,9 +38,8 @@ async def game_create_cmd(msg: Message, name: str, icon=None):
         text += f"类型：{game.type}\n"
         text += "```\n"
         await msg.reply(text)
-    except Exception as e:
-        print(traceback.format_exc())
-        print(e)# 如果出现异常，打印错误
+    except:
+        print(traceback.format_exc())  # 如果出现异常，打印错误
 
 
 bot.run()
