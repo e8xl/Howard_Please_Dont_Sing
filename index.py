@@ -257,10 +257,6 @@ async def exit_command(msg: Message, *args):
         task = keep_alive_tasks.pop(target_channel_id, None)
         if task:
             task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                logger.info(f"保持活跃任务 {target_channel_id} 已被取消。")
 
         # 取消推流任务
         streamer = stream_tasks.pop(target_channel_id, None)
@@ -411,7 +407,12 @@ async def neteasemusic_stream(msg: Message, *args):
                 # 下载音乐
                 songs = await NeteaseAPI.download_music(first_song)
             except Exception as e:
-                await msg.reply(f"搜索或下载过程中发生错误: {e}")
+                error_msg = str(e)
+                if NeteaseAPI.is_api_connection_error(error_msg):
+                    await msg.reply(NeteaseAPI.get_api_error_message())
+                else:
+                    await msg.reply(f"请检查API是否启动！若已经启动请报告开发者。 {e}")
+                
                 # 尝试退出频道
                 leave_result = await core.leave_channel(target_channel_id)
                 if 'error' not in leave_result:
@@ -494,7 +495,11 @@ async def neteasemusic_stream(msg: Message, *args):
         await msg.reply("任务已被取消。")
     except Exception as e:
         # 捕获其他预期外的异常
-        await msg.reply(f"发生错误: {e}")
+        error_msg = str(e)
+        if NeteaseAPI.is_api_connection_error(error_msg):
+            await msg.reply(NeteaseAPI.get_api_error_message())
+        else:
+            await msg.reply(f"发生错误: {e}")
         # 尝试退出频道
         if 'target_channel_id' in locals():
             # noinspection PyUnboundLocalVariable
@@ -535,7 +540,11 @@ async def s1_command(msg: Message, *args):
         await msg.reply(cm)
 
     except Exception as e:
-        await msg.reply(f"请检查API是否启动！若已经启动请报告开发者。 {e}")
+        error_msg = str(e)
+        if NeteaseAPI.is_api_connection_error(error_msg):
+            await msg.reply(NeteaseAPI.get_api_error_message())
+        else:
+            await msg.reply(f"请检查API是否启动！若已经启动请报告开发者。 {e}")
 
 
 # 下载（测试）
@@ -557,7 +566,11 @@ async def download(msg: Message, *args):
                             f"URL地址:{songs['download_url']}\n"
                             f"路径:{songs['file_name']}")
     except Exception as e:
-        await msg.reply(f"发生错误: {e}")
+        error_msg = str(e)
+        if NeteaseAPI.is_api_connection_error(error_msg):
+            await msg.reply(NeteaseAPI.get_api_error_message())
+        else:
+            await msg.reply(f"发生错误: {e}")
 
 
 # qrcode login
@@ -567,7 +580,11 @@ async def login(msg: Message):
         await msg.reply("正在登录，请开发者查看机器人后台")
         await NeteaseAPI.qrcode_login()
     except Exception as e:
-        await msg.reply(f"发生错误: {e}")
+        error_msg = str(e)
+        if NeteaseAPI.is_api_connection_error(error_msg):
+            await msg.reply(NeteaseAPI.get_api_error_message())
+        else:
+            await msg.reply(f"发生错误: {e}")
 
 
 # check CookieAlive
@@ -577,7 +594,11 @@ async def check(msg: Message):
         a = await NeteaseAPI.ensure_logged_in()
         await msg.reply(a)
     except Exception as e:
-        await msg.reply(f"发生错误: {e}")
+        error_msg = str(e)
+        if NeteaseAPI.is_api_connection_error(error_msg):
+            await msg.reply(NeteaseAPI.get_api_error_message())
+        else:
+            await msg.reply(f"发生错误: {e}")
 
 
 # 对指定频道点歌
@@ -694,7 +715,12 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
                 # 下载音乐
                 songs = await NeteaseAPI.download_music(first_song)
             except Exception as e:
-                await msg.reply(f"搜索或下载过程中发生错误: {e}")
+                error_msg = str(e)
+                if NeteaseAPI.is_api_connection_error(error_msg):
+                    await msg.reply(NeteaseAPI.get_api_error_message())
+                else:
+                    await msg.reply(f"请检查API是否启动！若已经启动请报告开发者。 {e}")
+                
                 # 尝试退出频道
                 leave_result = await core.leave_channel(target_channel_id)
                 if 'error' not in leave_result:
@@ -777,7 +803,11 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
         await msg.reply("任务已被取消。")
     except Exception as e:
         # 捕获其他预期外的异常
-        await msg.reply(f"发生错误: {e}")
+        error_msg = str(e)
+        if NeteaseAPI.is_api_connection_error(error_msg):
+            await msg.reply(NeteaseAPI.get_api_error_message())
+        else:
+            await msg.reply(f"发生错误: {e}")
         # 尝试退出频道
         if 'target_channel_id' in locals():
             # noinspection PyUnboundLocalVariable

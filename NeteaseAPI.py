@@ -4,6 +4,38 @@ import json
 import os
 from qrcode.main import QRCode
 
+# API连接错误检测
+def is_api_connection_error(error_msg: str) -> bool:
+    """
+    检查错误是否为API连接错误
+    
+    Args:
+        error_msg: 错误信息字符串
+        
+    Returns:
+        是否为API连接错误
+    """
+    connection_error_patterns = [
+        "Cannot connect to host localhost", 
+        "Connection refused", 
+        "拒绝网络连接",
+        "连接尝试失败",
+        "No route to host",
+        "Failed to establish a new connection",
+        "没有到主机的路由"
+    ]
+    
+    return any(pattern in error_msg for pattern in connection_error_patterns)
+
+def get_api_error_message() -> str:
+    """
+    获取API连接错误的友好提示消息
+    
+    Returns:
+        友好的错误消息
+    """
+    return "❌ 网易云音乐API服务未启动！\n请先启动NeteaseCloudMusicApi服务 (localhost:3000)\n如果您是服务器用户，请联系机器人管理员启动API服务。"
+
 # region 网易API部分
 async def search_netease_music(keyword: str):
     # aiohttp调用网易云音乐API localhost:3000/search?keywords=keyword
