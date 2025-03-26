@@ -57,6 +57,16 @@ def get_time():
 start_time = get_time()
 
 
+# 设置机器人游戏状态函数
+@bot.on_startup
+async def set_bot_game_status(_):
+    try:
+        await bot.client.update_playing_game(2128858)
+        print("已成功设置机器人游戏状态")
+    except Exception as e:
+        print(f"设置机器人游戏状态时发生错误: {e}")
+
+
 # endregion
 
 # region 基础功能
@@ -109,7 +119,8 @@ async def menu(msg: Message):
 
     cm.append(c3)
     await msg.reply(cm)
-    await bot.client.update_playing_game(2128858)
+    # 该命令不再需要设置游戏状态，因为在启动时已经设置
+    # await bot.client.update_playing_game(2128858)
 
 
 # 娱乐项目
