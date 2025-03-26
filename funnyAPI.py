@@ -138,7 +138,7 @@ def we_function(city):
 
 
 # 使用函数工厂创建we函数
-we = we_function("err")
+weather = we_function("err")
 
 '''
 不稳定暂时停用

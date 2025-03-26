@@ -13,7 +13,7 @@ import NeteaseAPI
 import core
 from client_manager import keep_alive_tasks, stream_tasks, stream_monitor_tasks
 from core import search_files
-from funnyAPI import we, local_hitokoto  # , get_hitokoto
+from funnyAPI import weather, local_hitokoto  # , get_hitokoto
 
 
 # region 初始化进程
@@ -163,7 +163,7 @@ async def cd(msg: Message, countdown_second: int = 60, *args):
 # 天气
 @bot.command(name='we', aliases=["天气", "weather"])
 async def we_command(msg: Message, city: str = "err"):
-    await we(msg, city)  # 调用we函数
+    await weather(msg, city)  # 调用we函数
 
 
 # endregion
