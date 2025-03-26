@@ -396,4 +396,137 @@ async def download_music_by_id(song_id: str):
         return {"error": str(e)}
 
 
+# 检查电台节目是否已经存在于本地
+def is_radio_program_exists(program_id: str) -> tuple[bool, str]:
+    """
+    检查指定ID的电台节目是否已经存在于本地
+    
+    Args:
+        program_id: 电台节目ID
+        
+    Returns:
+        (存在标志, 文件路径): 如果存在返回(True, 文件路径)，否则返回(False, "")
+    """
+    relative_path = "./AudioLib/Radio"
+    absolute_path = os.path.abspath(relative_path)
+    file_path = os.path.join(absolute_path, f"{program_id}.mp3")
+    file_path = os.path.normpath(file_path)
+    
+    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+        return True, file_path
+    return False, ""
+
+
+# 获取电台节目详情并下载
+async def download_radio_program(program_id: str):
+    """
+    获取电台节目详情并下载电台节目
+    
+    Args:
+        program_id: 电台节目ID
+        
+    Returns:
+        包含电台节目信息和文件路径的字典
+    """
+    try:
+        # 确保已登录
+        await ensure_logged_in()
+        
+        # 检查节目是否已存在
+        is_exists, file_path = is_radio_program_exists(program_id)
+        if is_exists:
+            # 如果节目已存在，获取节目信息但不重新下载
+            # 加载 Cookie
+            cookies = await load_cookies()
+            if not cookies:
+                return {"error": "未登录，请通知开发者完成登录操作"}
+                
+            async with aiohttp.ClientSession(cookies=cookies) as session:
+                # 获取电台节目详情
+                async with session.get(f"http://localhost:3000/dj/program/detail?id={program_id}") as detail_resp:
+                    detail_data = await detail_resp.json()
+                    if detail_data['code'] != 200:
+                        return {"error": "获取电台节目详情失败"}
+                    
+                    # 提取节目信息
+                    program_info = detail_data.get('program', {})
+                    if not program_info:
+                        return {"error": f"未找到ID为 {program_id} 的电台节目"}
+                    
+                    program_name = program_info['name']
+                    radio_name = program_info['radio']['name']
+                    dj_name = program_info['dj']['nickname']
+                    description = program_info.get('description', "")
+                    
+                    print(f"电台节目 {program_name} (ID: {program_id}) 已存在，跳过下载")
+                    return {
+                        "file_name": file_path,
+                        "download_url": "使用本地缓存",
+                        "song_name": program_name,
+                        "artist_name": dj_name,
+                        "album_name": radio_name,
+                        "description": description,
+                        "cached": True,
+                        "is_radio": True
+                    }
+                    
+        # 如果节目不存在，进行下载流程
+        # 加载 Cookie
+        cookies = await load_cookies()
+        if not cookies:
+            return {"error": "未登录，请通知开发者完成登录操作"}
+            
+        async with aiohttp.ClientSession(cookies=cookies) as session:
+            # 获取电台节目详情
+            async with session.get(f"http://localhost:3000/dj/program/detail?id={program_id}") as detail_resp:
+                detail_data = await detail_resp.json()
+                if detail_data['code'] != 200:
+                    return {"error": "获取电台节目详情失败"}
+                
+                # 提取节目信息
+                program_info = detail_data.get('program', {})
+                if not program_info:
+                    return {"error": f"未找到ID为 {program_id} 的电台节目"}
+                
+                program_name = program_info['name']
+                radio_name = program_info['radio']['name']
+                dj_name = program_info['dj']['nickname']
+                description = program_info.get('description', "")
+                main_track_id = program_info['mainTrackId']
+                
+                print(f"获取到电台节目: {program_name} (ID: {program_id}, 主曲目ID: {main_track_id})")
+                
+                # 使用主曲目ID获取下载链接
+                async with session.get(
+                        f"http://localhost:3000/song/download/url/v1?id={main_track_id}&level=higher") as download_resp:
+                    download_data = await download_resp.json()
+                    if download_data['code'] != 200 or not download_data['data']['url']:
+                        return {"error": "无法获取下载链接，可能需要 VIP 权限"}
+
+                    download_url = download_data['data']['url']
+                    relative_path = "./AudioLib/Radio"
+                    absolute_path = os.path.abspath(relative_path)
+                    os.makedirs(absolute_path, exist_ok=True)  # 确保Radio文件夹存在
+                    file_name = os.path.join(absolute_path, f"{program_id}.mp3")
+                    
+                    # 下载文件
+                    file_name = os.path.normpath(file_name)
+                    async with session.get(download_url) as music_resp:
+                        with open(file_name, 'wb') as f:
+                            f.write(await music_resp.read())
+                    
+                    return {
+                        "file_name": file_name,
+                        "download_url": download_url,
+                        "song_name": program_name,
+                        "artist_name": dj_name,
+                        "album_name": radio_name,
+                        "description": description,
+                        "cached": False,
+                        "is_radio": True
+                    }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # endregion
