@@ -201,6 +201,27 @@ async def ensure_logged_in():
         return status
 
 
+# 检查歌曲是否已经存在于本地
+def is_song_exists(song_id: str) -> tuple[bool, str]:
+    """
+    检查指定ID的歌曲是否已经存在于本地
+    
+    Args:
+        song_id: 歌曲ID
+        
+    Returns:
+        (存在标志, 文件路径): 如果存在返回(True, 文件路径)，否则返回(False, "")
+    """
+    relative_path = "./AudioLib"
+    absolute_path = os.path.abspath(relative_path)
+    file_path = os.path.join(absolute_path, f"{song_id}.mp3")
+    file_path = os.path.normpath(file_path)
+    
+    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+        return True, file_path
+    return False, ""
+
+
 # 下载音乐
 async def download_music(keyword: str):
     try:
@@ -224,12 +245,30 @@ async def download_music(keyword: str):
                 if not songs:
                     return {"error": "未找到相关歌曲"}
 
-                # 下载逻辑
+                # 提取歌曲信息
                 first_song = songs[0]
-                song_id = first_song['id']
+                song_id = str(first_song['id'])
                 song_name = first_song['name']
                 artist_name = ", ".join(artist['name'] for artist in first_song['artists'])
                 album_name = first_song['album']['name']
+                
+                print(f"搜索到歌曲: {song_name} - {artist_name} (ID: {song_id})")
+                
+                # 检查歌曲是否已存在
+                is_exists, file_name = is_song_exists(song_id)
+                if is_exists:
+                    print(f"歌曲 {song_name} (ID: {song_id}) 已存在，跳过下载")
+                    return {
+                        "file_name": file_name,
+                        "download_url": "使用本地缓存",
+                        "song_name": song_name,
+                        "artist_name": artist_name,
+                        "album_name": album_name,
+                        "cached": True
+                    }
+
+                # 下载新歌曲
+                print(f"开始下载歌曲 {song_name} (ID: {song_id})")
                 relative_path = "./AudioLib"
                 absolute_path = os.path.abspath(relative_path)
 
@@ -254,7 +293,104 @@ async def download_music(keyword: str):
                         "download_url": download_url,
                         "song_name": song_name,
                         "artist_name": artist_name,
-                        "album_name": album_name
+                        "album_name": album_name,
+                        "cached": False
+                    }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# 通过ID直接下载歌曲
+async def download_music_by_id(song_id: str):
+    try:
+        # 确保已登录
+        await ensure_logged_in()
+
+        # 检查歌曲是否已存在
+        is_exists, file_path = is_song_exists(song_id)
+        if is_exists:
+            # 如果歌曲已存在，获取歌曲信息但不重新下载
+            # 加载 Cookie
+            cookies = await load_cookies()
+            if not cookies:
+                return {"error": "未登录，请通知开发者完成登录操作"}
+                
+            async with aiohttp.ClientSession(cookies=cookies) as session:
+                # 获取歌曲详情
+                async with session.get(f"http://localhost:3000/song/detail?ids={song_id}") as detail_resp:
+                    detail_data = await detail_resp.json()
+                    if detail_data['code'] != 200:
+                        return {"error": "获取歌曲详情失败"}
+                    
+                    # 提取歌曲信息
+                    song_info = detail_data.get('songs', [])
+                    if not song_info:
+                        return {"error": f"未找到ID为 {song_id} 的歌曲"}
+                    
+                    song_info = song_info[0]
+                    song_name = song_info['name']
+                    artist_name = ", ".join(artist['name'] for artist in song_info['ar'])
+                    album_name = song_info['al']['name']
+                    
+                    print(f"歌曲 {song_name} (ID: {song_id}) 已存在，跳过下载")
+                    return {
+                        "file_name": file_path,
+                        "download_url": "使用本地缓存",
+                        "song_name": song_name,
+                        "artist_name": artist_name,
+                        "album_name": album_name,
+                        "cached": True
+                    }
+
+        # 如果歌曲不存在，进行常规下载流程
+        # 加载 Cookie
+        cookies = await load_cookies()
+        if not cookies:
+            return {"error": "未登录，请通知开发者完成登录操作"}
+
+        async with aiohttp.ClientSession(cookies=cookies) as session:
+            # 获取歌曲详情
+            async with session.get(f"http://localhost:3000/song/detail?ids={song_id}") as detail_resp:
+                detail_data = await detail_resp.json()
+                if detail_data['code'] != 200:
+                    return {"error": "获取歌曲详情失败"}
+                
+                # 提取歌曲信息
+                song_info = detail_data.get('songs', [])
+                if not song_info:
+                    return {"error": f"未找到ID为 {song_id} 的歌曲"}
+                
+                song_info = song_info[0]
+                song_name = song_info['name']
+                artist_name = ", ".join(artist['name'] for artist in song_info['ar'])
+                album_name = song_info['al']['name']
+                
+                # 获取下载链接
+                async with session.get(
+                        f"http://localhost:3000/song/download/url/v1?id={song_id}&level=higher") as download_resp:
+                    download_data = await download_resp.json()
+                    if download_data['code'] != 200 or not download_data['data']['url']:
+                        return {"error": "无法获取下载链接，可能需要 VIP 权限"}
+
+                    download_url = download_data['data']['url']
+                    relative_path = "./AudioLib"
+                    absolute_path = os.path.abspath(relative_path)
+                    file_name = os.path.join(absolute_path, f"{song_id}.mp3")
+                    os.makedirs(os.path.dirname(file_name), exist_ok=True)
+
+                    # 下载文件
+                    file_name = os.path.normpath(file_name)
+                    async with session.get(download_url) as music_resp:
+                        with open(file_name, 'wb') as f:
+                            f.write(await music_resp.read())
+
+                    return {
+                        "file_name": file_name,
+                        "download_url": download_url,
+                        "song_name": song_name,
+                        "artist_name": artist_name,
+                        "album_name": album_name,
+                        "cached": False
                     }
     except Exception as e:
         return {"error": str(e)}

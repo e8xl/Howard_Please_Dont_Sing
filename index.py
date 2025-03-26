@@ -289,7 +289,7 @@ async def ls_command(msg: Message, *args):
 @bot.command(name="play", aliases=["点歌", "p"])
 async def neteasemusic_stream(msg: Message, *args):
     if not args:
-        await msg.reply("参数缺失，请提供一个搜索关键字，例如：test 周杰伦")
+        await msg.reply("参数缺失，请提供一个搜索关键字或网易云音乐链接，例如：\n点歌 周杰伦\n点歌 https://music.163.com/song?id=123456")
         return
 
     try:
@@ -353,13 +353,41 @@ async def neteasemusic_stream(msg: Message, *args):
 
         # 参数处理与搜索
         keyword = " ".join(args)
-        await msg.reply(f"正在搜索关键字: {keyword}")
-
-        # 使用search_netease_music进行搜索，然后获取第一首歌曲信息
-        try:
-            search_results = await NeteaseAPI.search_netease_music(keyword)
-            if search_results == "未找到相关音乐":
-                await msg.reply("未找到相关音乐")
+        
+        # 检查是否是网易云音乐URL
+        import re
+        music_id_match = re.search(r'music\.163\.com/song\?id=(\d+)', keyword)
+        
+        if music_id_match:
+            # 直接使用ID获取歌曲
+            music_id = music_id_match.group(1)
+            await msg.reply(f"检测到网易云音乐链接，正在获取歌曲ID: {music_id}")
+            songs = await NeteaseAPI.download_music_by_id(music_id)
+        else:
+            # 使用关键词搜索
+            await msg.reply(f"正在搜索关键字: {keyword}")
+            # 使用search_netease_music进行搜索，然后获取第一首歌曲信息
+            try:
+                search_results = await NeteaseAPI.search_netease_music(keyword)
+                if search_results == "未找到相关音乐":
+                    await msg.reply("未找到相关音乐")
+                    # 尝试退出频道
+                    leave_result = await core.leave_channel(target_channel_id)
+                    if 'error' not in leave_result:
+                        # 取消保持活跃任务
+                        task = keep_alive_tasks.pop(target_channel_id, None)
+                        if task:
+                            task.cancel()
+                    return
+                    
+                # 使用第一首搜索结果的歌曲下载
+                first_song = search_results.split('\n')[0]
+                await msg.reply(f"已找到歌曲：{first_song}，准备下载...")
+                
+                # 下载音乐
+                songs = await NeteaseAPI.download_music(first_song)
+            except Exception as e:
+                await msg.reply(f"搜索或下载过程中发生错误: {e}")
                 # 尝试退出频道
                 leave_result = await core.leave_channel(target_channel_id)
                 if 'error' not in leave_result:
@@ -368,23 +396,6 @@ async def neteasemusic_stream(msg: Message, *args):
                     if task:
                         task.cancel()
                 return
-                
-            # 使用第一首搜索结果的歌曲下载
-            first_song = search_results.split('\n')[0]
-            await msg.reply(f"已找到歌曲：{first_song}，准备下载...")
-            
-            # 下载音乐
-            songs = await NeteaseAPI.download_music(first_song)
-        except Exception as e:
-            await msg.reply(f"搜索或下载过程中发生错误: {e}")
-            # 尝试退出频道
-            leave_result = await core.leave_channel(target_channel_id)
-            if 'error' not in leave_result:
-                # 取消保持活跃任务
-                task = keep_alive_tasks.pop(target_channel_id, None)
-                if task:
-                    task.cancel()
-            return
 
         # 检查下载结果是否为错误消息
         if "error" in songs:
@@ -399,8 +410,9 @@ async def neteasemusic_stream(msg: Message, *args):
             return
 
         # 如果下载成功，发送歌曲信息
+        cache_status = "（使用本地缓存）" if songs.get("cached", False) else ""
         await msg.reply(
-            f"已准备播放：\n{songs['song_name']} - {songs['artist_name']}({songs['album_name']})\n正在准备推流进程")
+            f"已准备播放{cache_status}：\n{songs['song_name']} - {songs['artist_name']}({songs['album_name']})\n正在准备推流进程")
         audio_path = songs['file_name']
         await asyncio.sleep(3)
 
@@ -536,7 +548,7 @@ async def check(msg: Message):
 @bot.command(name="pc")
 async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
     if not song_name or not channel_id:
-        await msg.reply("参数缺失，请提供歌名和频道ID，格式：pc \"歌名\" \"频道ID\"")
+        await msg.reply("参数缺失，请提供歌名/URL和频道ID，格式：pc \"歌名或网易云链接\" \"频道ID\"")
         return
 
     try:
@@ -594,14 +606,49 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
                 task = asyncio.create_task(core.keep_channel_alive(target_channel_id))
                 keep_alive_tasks[target_channel_id] = task
 
-        # 进行歌曲搜索
-        await msg.reply(f"正在搜索歌曲: {song_name}")
+        # 检查song_name是否是网易云音乐链接或ID
+        import re
+        music_id_match = re.search(r'music\.163\.com/song\?id=(\d+)', song_name)
+        
+        # 如果第一个参数是纯数字且长度不小于6位，也视为直接ID
+        is_direct_id = song_name.isdigit() and len(song_name) >= 6
+        
+        if music_id_match or is_direct_id:
+            # 直接使用ID获取歌曲
+            if music_id_match:
+                music_id = music_id_match.group(1)
+                await msg.reply(f"检测到网易云音乐链接，正在获取歌曲ID: {music_id}")
+            else:
+                music_id = song_name
+                await msg.reply(f"检测到直接使用歌曲ID: {music_id}")
+                
+            songs = await NeteaseAPI.download_music_by_id(music_id)
+        else:
+            # 进行歌曲搜索
+            await msg.reply(f"正在搜索歌曲: {song_name}")
 
-        # 使用search_netease_music进行搜索，然后获取第一首歌曲信息
-        try:
-            search_results = await NeteaseAPI.search_netease_music(song_name)
-            if search_results == "未找到相关音乐":
-                await msg.reply("未找到相关音乐")
+            # 使用search_netease_music进行搜索，然后获取第一首歌曲信息
+            try:
+                search_results = await NeteaseAPI.search_netease_music(song_name)
+                if search_results == "未找到相关音乐":
+                    await msg.reply("未找到相关音乐")
+                    # 尝试退出频道
+                    leave_result = await core.leave_channel(target_channel_id)
+                    if 'error' not in leave_result:
+                        # 取消保持活跃任务
+                        task = keep_alive_tasks.pop(target_channel_id, None)
+                        if task:
+                            task.cancel()
+                    return
+                    
+                # 使用第一首搜索结果的歌曲下载
+                first_song = search_results.split('\n')[0]
+                await msg.reply(f"已找到歌曲：{first_song}，准备下载...")
+                
+                # 下载音乐
+                songs = await NeteaseAPI.download_music(first_song)
+            except Exception as e:
+                await msg.reply(f"搜索或下载过程中发生错误: {e}")
                 # 尝试退出频道
                 leave_result = await core.leave_channel(target_channel_id)
                 if 'error' not in leave_result:
@@ -610,23 +657,6 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
                     if task:
                         task.cancel()
                 return
-                
-            # 使用第一首搜索结果的歌曲下载
-            first_song = search_results.split('\n')[0]
-            await msg.reply(f"已找到歌曲：{first_song}，准备下载...")
-            
-            # 下载音乐
-            songs = await NeteaseAPI.download_music(first_song)
-        except Exception as e:
-            await msg.reply(f"搜索或下载过程中发生错误: {e}")
-            # 尝试退出频道
-            leave_result = await core.leave_channel(target_channel_id)
-            if 'error' not in leave_result:
-                # 取消保持活跃任务
-                task = keep_alive_tasks.pop(target_channel_id, None)
-                if task:
-                    task.cancel()
-            return
 
         # 检查下载结果是否为错误消息
         if "error" in songs:
@@ -641,8 +671,9 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
             return
 
         # 如果下载成功，发送歌曲信息
+        cache_status = "（使用本地缓存）" if songs.get("cached", False) else ""
         await msg.reply(
-            f"已准备在频道 {target_channel_id} 播放：\n{songs['song_name']} - {songs['artist_name']}({songs['album_name']})\n正在准备推流进程")
+            f"已准备在频道 {target_channel_id} 播放{cache_status}：\n{songs['song_name']} - {songs['artist_name']}({songs['album_name']})\n正在准备推流进程")
         audio_path = songs['file_name']
         await asyncio.sleep(3)
 
