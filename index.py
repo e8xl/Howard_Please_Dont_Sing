@@ -6,6 +6,9 @@ import random
 import time
 from datetime import datetime, timedelta
 
+# 监测文件夹大小的阈值（字节）
+AUDIO_LIB_SIZE_ALERT_THRESHOLD = 200 * 1024 * 1024  # 第一个数字为MB
+
 from khl import Bot, Message
 from khl.card import Card, CardMessage, Element, Module, Types
 
@@ -14,6 +17,41 @@ import core
 from client_manager import keep_alive_tasks, stream_tasks, stream_monitor_tasks
 from core import search_files
 from funnyAPI import weather, local_hitokoto  # , get_hitokoto
+
+
+# 计算文件夹大小的函数
+def get_folder_size(folder_path):
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(folder_path):
+        for filename in filenames:
+            file_path = os.path.join(dirpath, filename)
+            # 只计算文件的大小，跳过符号链接防止重复计算或无限循环
+            if not os.path.islink(file_path):
+                total_size += os.path.getsize(file_path)
+    return total_size
+
+
+# 检查 AudioLib 文件夹大小
+def check_audio_lib_size():
+    audio_lib_path = "./AudioLib"
+    # 如果文件夹不存在，创建它
+    if not os.path.exists(audio_lib_path):
+        os.makedirs(audio_lib_path)
+        print(f"已创建 {audio_lib_path} 文件夹")
+        return
+    
+    # 计算文件夹大小
+    folder_size = get_folder_size(audio_lib_path)
+    # 转换为MB便于显示
+    folder_size_mb = folder_size / (1024 * 1024)
+    
+    # 输出当前文件夹大小
+    print(f"当前 AudioLib 文件夹大小: {folder_size_mb:.2f} MB")
+    
+    # 检查是否超过阈值
+    if folder_size > AUDIO_LIB_SIZE_ALERT_THRESHOLD:
+        print(f"⚠️ 警告：AudioLib 文件夹大小 ({folder_size_mb:.2f} MB) 已超过设定阈值 ({AUDIO_LIB_SIZE_ALERT_THRESHOLD/(1024*1024):.2f} MB)")
+        print("请及时清理 AudioLib 文件夹，以免占用过多存储空间！")
 
 
 # region 初始化进程
@@ -61,6 +99,9 @@ start_time = get_time()
 @bot.on_startup
 async def set_bot_game_status(_):
     try:
+        # 启动时检查 AudioLib 文件夹大小
+        check_audio_lib_size()
+        
         await bot.client.update_playing_game(2128858)
         print("已成功设置机器人游戏状态")
     except Exception as e:
