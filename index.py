@@ -230,9 +230,10 @@ async def exit_command(msg: Message, *args):
     # 确定离开的频道
     if args:
         try:
-            target_channel_id = int(args[0])
+            # 不做强制类型转换，直接使用字符串形式的ID
+            target_channel_id = args[0]
         except ValueError:
-            await msg.reply("提供的频道ID无效，请确保提供的是数字ID。")
+            await msg.reply("提供的频道ID无效，请确保提供的是有效ID。")
             return
     else:
         # 获取用户当前所在的语音频道
