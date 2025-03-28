@@ -94,10 +94,10 @@ def is_bot_in_channel(alive_data, channel_id):
     """
     if 'error' in alive_data:
         return False, alive_data['error']
-        
+
     # 转换channel_id为字符串，确保类型一致性
     channel_id_str = str(channel_id)
-    
+
     for item in alive_data.get('items', []):
         if str(item['id']) == channel_id_str:
             return True, None

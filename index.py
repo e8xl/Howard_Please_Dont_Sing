@@ -39,18 +39,19 @@ def check_audio_lib_size():
         os.makedirs(audio_lib_path)
         print(f"已创建 {audio_lib_path} 文件夹")
         return
-    
+
     # 计算文件夹大小
     folder_size = get_folder_size(audio_lib_path)
     # 转换为MB便于显示
     folder_size_mb = folder_size / (1024 * 1024)
-    
+
     # 输出当前文件夹大小
     print(f"当前 AudioLib 文件夹大小: {folder_size_mb:.2f} MB")
-    
+
     # 检查是否超过阈值
     if folder_size > AUDIO_LIB_SIZE_ALERT_THRESHOLD:
-        print(f"⚠️ 警告：AudioLib 文件夹大小 ({folder_size_mb:.2f} MB) 已超过设定阈值 ({AUDIO_LIB_SIZE_ALERT_THRESHOLD/(1024*1024):.2f} MB)")
+        print(
+            f"⚠️ 警告：AudioLib 文件夹大小 ({folder_size_mb:.2f} MB) 已超过设定阈值 ({AUDIO_LIB_SIZE_ALERT_THRESHOLD / (1024 * 1024):.2f} MB)")
         print("请及时清理 AudioLib 文件夹，以免占用过多存储空间！")
 
 
@@ -101,7 +102,7 @@ async def set_bot_game_status(_):
     try:
         # 启动时检查 AudioLib 文件夹大小
         check_audio_lib_size()
-        
+
         await bot.client.update_playing_game(2128858)
         print("已成功设置机器人游戏状态")
     except Exception as e:
@@ -258,7 +259,17 @@ async def play(msg: Message, *args):
     if 'error' in join_result:
         await msg.reply(f"加入频道失败: {join_result['error']}")
     else:
-        await msg.reply(f"成功加入频道: {target_channel_id}\n{join_result}")
+        # 提取参数构建RTP地址
+        ip = join_result.get('ip')
+        port = join_result.get('port')
+        rtcp_port = join_result.get('rtcp_port')
+        # audio_ssrc = join_result.get('audio_ssrc')
+        # audio_pt = join_result.get('audio_pt')
+
+        # 构建RTP地址
+        rtp_address = f"rtp://{ip}:{port}?rtcpport={rtcp_port}"
+
+        await msg.reply(f"成功加入频道: {target_channel_id}\n{join_result}\n\nRTP地址: {rtp_address}")
         if target_channel_id not in keep_alive_tasks:
             task = asyncio.create_task(core.keep_channel_alive(target_channel_id))
             keep_alive_tasks[target_channel_id] = task
@@ -341,7 +352,8 @@ async def ls_command(msg: Message, *args):
 @bot.command(name="play", aliases=["点歌", "p"])
 async def neteasemusic_stream(msg: Message, *args):
     if not args:
-        await msg.reply("参数缺失，请提供一个搜索关键字或网易云音乐链接，例如：\n点歌 周杰伦\n点歌 https://music.163.com/song?id=123456\n点歌 https://music.163.com/dj?id=3068136069")
+        await msg.reply(
+            "参数缺失，请提供一个搜索关键字或网易云音乐链接，例如：\n点歌 周杰伦\n点歌 https://music.163.com/song?id=123456\n点歌 https://music.163.com/dj?id=3068136069")
         return
 
     try:
@@ -405,16 +417,16 @@ async def neteasemusic_stream(msg: Message, *args):
 
         # 参数处理与搜索
         keyword = " ".join(args)
-        
+
         # 检查是否是网易云音乐URL或电台节目URL
         import re
-        
+
         # 检查是否是网易云音乐歌曲链接
         song_id_match = re.search(r'music\.163\.com/song\?id=(\d+)', keyword)
-        
+
         # 检查是否是网易云电台节目链接
         dj_id_match = re.search(r'music\.163\.com/dj\?id=(\d+)', keyword)
-        
+
         if dj_id_match:
             # 处理电台节目
             dj_id = dj_id_match.group(1)
@@ -441,11 +453,11 @@ async def neteasemusic_stream(msg: Message, *args):
                         if task:
                             task.cancel()
                     return
-                    
+
                 # 使用第一首搜索结果的歌曲下载
                 first_song = search_results.split('\n')[0]
                 await msg.reply(f"已找到歌曲：{first_song}，准备下载...")
-                
+
                 # 下载音乐
                 songs = await NeteaseAPI.download_music(first_song)
             except Exception as e:
@@ -454,7 +466,7 @@ async def neteasemusic_stream(msg: Message, *args):
                     await msg.reply(NeteaseAPI.get_api_error_message())
                 else:
                     await msg.reply(f"请检查API是否启动！若已经启动请报告开发者。 {e}")
-                
+
                 # 尝试退出频道
                 leave_result = await core.leave_channel(target_channel_id)
                 if 'error' not in leave_result:
@@ -479,19 +491,19 @@ async def neteasemusic_stream(msg: Message, *args):
         # 如果下载成功，发送歌曲信息
         cache_status = "（使用本地缓存）" if songs.get("cached", False) else ""
         content_type = "电台节目" if songs.get("is_radio", False) else "歌曲"
-        
+
         # 构建消息文本
         message_text = f"已准备播放{cache_status}：\n"
         message_text += f"{content_type}：{songs['song_name']} - {songs['artist_name']}({songs['album_name']})"
-        
+
         # 如果是电台，添加描述信息
         if songs.get("is_radio", False) and songs.get("description"):
             # 截取描述的前100个字符，避免消息过长
             short_desc = songs["description"][:100] + "..." if len(songs["description"]) > 100 else songs["description"]
             message_text += f"\n简介：{short_desc}"
-            
+
         message_text += "\n正在准备推流进程"
-        
+
         await msg.reply(message_text)
         audio_path = songs['file_name']
         await asyncio.sleep(3)
@@ -653,7 +665,7 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
     try:
         # 使用提供的频道ID
         target_channel_id = channel_id.strip()
-        
+
         # 获取当前活跃频道列表
         alive_data = await core.get_alive_channel_list()
         if 'error' in alive_data:
@@ -707,16 +719,16 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
 
         # 检查song_name是否是各种网易云音乐链接或ID
         import re
-        
+
         # 检查是否是网易云音乐歌曲链接
         song_id_match = re.search(r'music\.163\.com/song\?id=(\d+)', song_name)
-        
+
         # 检查是否是网易云电台节目链接
         dj_id_match = re.search(r'music\.163\.com/dj\?id=(\d+)', song_name)
-        
+
         # 如果第一个参数是纯数字且长度不小于6位，也视为直接ID
         is_direct_id = song_name.isdigit() and len(song_name) >= 6
-        
+
         if dj_id_match:
             # 处理电台节目
             dj_id = dj_id_match.group(1)
@@ -730,7 +742,7 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
             else:
                 music_id = song_name
                 await msg.reply(f"检测到直接使用歌曲ID: {music_id}")
-                
+
             songs = await NeteaseAPI.download_music_by_id(music_id)
         else:
             # 进行歌曲搜索
@@ -749,11 +761,11 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
                         if task:
                             task.cancel()
                     return
-                    
+
                 # 使用第一首搜索结果的歌曲下载
                 first_song = search_results.split('\n')[0]
                 await msg.reply(f"已找到歌曲：{first_song}，准备下载...")
-                
+
                 # 下载音乐
                 songs = await NeteaseAPI.download_music(first_song)
             except Exception as e:
@@ -762,7 +774,7 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
                     await msg.reply(NeteaseAPI.get_api_error_message())
                 else:
                     await msg.reply(f"请检查API是否启动！若已经启动请报告开发者。 {e}")
-                
+
                 # 尝试退出频道
                 leave_result = await core.leave_channel(target_channel_id)
                 if 'error' not in leave_result:
@@ -787,19 +799,19 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
         # 如果下载成功，发送歌曲信息
         cache_status = "（使用本地缓存）" if songs.get("cached", False) else ""
         content_type = "电台节目" if songs.get("is_radio", False) else "歌曲"
-        
+
         # 构建消息文本
         message_text = f"已准备在频道 {target_channel_id} 播放{cache_status}：\n"
         message_text += f"{content_type}：{songs['song_name']} - {songs['artist_name']}({songs['album_name']})"
-        
+
         # 如果是电台，添加描述信息
         if songs.get("is_radio", False) and songs.get("description"):
             # 截取描述的前100个字符，避免消息过长
             short_desc = songs["description"][:100] + "..." if len(songs["description"]) > 100 else songs["description"]
             message_text += f"\n简介：{short_desc}"
-            
+
         message_text += "\n正在准备推流进程"
-        
+
         await msg.reply(message_text)
         audio_path = songs['file_name']
         await asyncio.sleep(3)
