@@ -6,7 +6,7 @@ import os
 import time
 
 from VoiceAPI import KookVoiceClient, VoiceClientError
-from client_manager import get_client, remove_client
+from client_manager import get_client, remove_client, clients
 
 
 # region 环境配置部分
@@ -141,6 +141,17 @@ async def leave_channel(channel_id):
     temp_client = KookVoiceClient(token)
     try:
         leave_data = await temp_client.leave_channel(channel_id)
+        
+        # 关闭持久客户端连接（如果存在）
+        if channel_id in clients:
+            client = clients.pop(channel_id, None)
+            if client:
+                try:
+                    await client.close()
+                    print(f"已关闭频道 {channel_id} 的持久客户端")
+                except Exception as e:
+                    print(f"关闭持久客户端时发生错误: {e}")
+        
         return {"success": leave_data}
     except VoiceClientError as e:
         return {"error": str(e)}
@@ -154,15 +165,53 @@ async def keep_channel_alive(channel_id):
     """
     client = await get_client(channel_id, token)
     try:
+        # 初始化连续失败计数器
+        consecutive_failures = 0
+        max_failures = 3  # 允许连续失败的最大次数
+
         while True:
             try:
-                await client.keep_alive(channel_id)
-                print(f"保持频道 {channel_id} 活跃成功")
+                # 记录发送心跳前的时间
+                before_time = time.time()
+
+                # 发送心跳
+                result = await client.keep_alive(channel_id)
+
+                # 计算心跳响应时间
+                response_time = time.time() - before_time
+
+                # 重置失败计数
+                consecutive_failures = 0
+
+                # 记录心跳成功的详细信息
+                print(f"保持频道 {channel_id} 活跃成功，响应时间: {response_time:.2f}秒，响应数据: {result}")
+
             except VoiceClientError as e:
-                print(f"保持频道 {channel_id} 活跃时出错: {e}")
-            await asyncio.sleep(40)  # 等待40秒后再次调用
+                # 增加失败计数
+                consecutive_failures += 1
+
+                print(f"保持频道 {channel_id} 活跃时出错 (尝试 {consecutive_failures}/{max_failures}): {e}")
+
+                # 如果连续失败次数超过阈值，重新创建客户端
+                if consecutive_failures >= max_failures:
+                    print(f"频道 {channel_id} 连续 {consecutive_failures} 次心跳失败，尝试重新创建客户端")
+                    await remove_client(channel_id)
+                    client = await get_client(channel_id, token)
+                    consecutive_failures = 0
+
+            except Exception as e:
+                # 记录非预期的异常
+                print(f"保持频道 {channel_id} 活跃时发生意外错误: {e}")
+                consecutive_failures += 1
+
+            # 等待时间可以根据KOOK的要求调整
+            # KOOK的文档建议30-50秒发送一次心跳
+            await asyncio.sleep(30)  # 减少到30秒，确保不会因为网络延迟等问题导致超时
+
     except asyncio.CancelledError:
         print(f"保持频道 {channel_id} 活动任务被取消")
+    except Exception as e:
+        print(f"保持频道 {channel_id} 活动任务发生异常: {e}")
     finally:
         await remove_client(channel_id)
         print(f"已关闭频道 {channel_id} 的客户端会话")
@@ -334,4 +383,206 @@ class AudioStreamer:
 
     async def __aexit__(self, exc_type, exc, tb):
         await self.stop()
-# endregion
+
+
+# region 新增推流功能类
+class EnhancedAudioStreamer:
+    """增强型音频流媒体类，支持播放列表管理"""
+
+    def __init__(self, connection_info, message_obj=None, message_callback=None):
+        """
+        初始化增强型音频推流
+        
+        :param connection_info: 从KOOK API获取的连接信息
+        :param message_obj: 原始消息对象，用于回复
+        :param message_callback: 消息回调函数，用于发送通知
+        """
+        if not connection_info:
+            raise ValueError("connection_info 不能为空")
+
+        # 导入config以获取音量参数
+        config = open_file('./config/config.json')
+        volume_param = config.get('ffmpge_volume', '0.8')
+
+        # 尝试转换音量为浮点数
+        try:
+            volume = float(volume_param)
+            if volume > 2.0:  # 验证音量参数
+                volume = 2.0
+                print(f"警告：音量参数 {volume_param} 超过最大值 2.0，将使用 2.0")
+                volume_param = '2.0'
+        except ValueError:
+            print(f"警告：音量参数 {volume_param} 不是有效的数值，将使用默认值 0.8")
+            volume_param = '0.8'
+
+        self.connection_info = connection_info
+        self.message_obj = message_obj
+        self.message_callback = message_callback
+        self.rtp_url = self._build_rtp_url()
+        self.streamer = None
+        self.playlist_manager = None
+        self.volume = volume_param  # 存储音量参数
+
+    def _build_rtp_url(self):
+        """根据连接信息构建RTP URL"""
+        ip = self.connection_info['ip']
+        port = self.connection_info['port']
+        rtcp_port = self.connection_info['rtcp_port']
+        audio_ssrc = self.connection_info['audio_ssrc']
+        audio_pt = self.connection_info['audio_pt']
+
+        # 构建适用于FFmpegPipeStreamer的RTP URL
+        # 注意这里使用字符串格式化将参数添加到URL
+        return f"rtp://{ip}:{port}?rtcpport={rtcp_port}&ssrc={audio_ssrc}&payload_type={audio_pt}"
+
+    async def start(self):
+        """启动音频推流服务"""
+        try:
+            from StreamTools.ffmpeg_stream_tool import FFmpegPipeStreamer
+            import logging
+            logger = logging.getLogger(__name__)
+
+            # 从connection_info中获取bitrate，并进行处理
+            bitrate = self.connection_info.get('bitrate', 32000)
+            # 转换为kbps并增加15%的余量以确保音质
+            bitrate_k = f"{int(bitrate) * 1.15 // 1000}k"
+
+            # 创建FFmpegPipeStreamer实例，传入消息对象和回调函数
+            self.streamer = FFmpegPipeStreamer(
+                self.rtp_url,
+                bitrate=bitrate_k,
+                message_obj=self.message_obj,
+                message_callback=self.message_callback,
+                volume=self.volume  # 传递音量参数
+            )
+
+            # 获取播放列表管理器
+            self.playlist_manager = self.streamer.playlist_manager
+
+            # 启动推流
+            await self.streamer.start()
+
+            logger.info(f"增强型音频推流服务已启动，RTP地址: {self.rtp_url}，比特率: {bitrate_k}")
+            return True
+        except Exception as e:
+            logger.error(f"启动增强型音频推流服务时出错: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return False
+
+    async def add_song(self, audio_file_path, song_info=None):
+        """
+        添加歌曲到播放列表
+        
+        :param audio_file_path: 音频文件路径
+        :param song_info: 包含歌曲名、艺术家等信息的字典
+        :return: 是否成功添加
+        """
+        if not self.streamer or not self.playlist_manager:
+            logger.error("推流服务未启动，无法添加歌曲")
+            return False
+
+        result = self.playlist_manager.add_song(audio_file_path, song_info)
+        if result:
+            logger.info(f"成功添加歌曲到播放列表: {os.path.basename(audio_file_path)}")
+        else:
+            logger.error(f"添加歌曲失败，文件不存在: {audio_file_path}")
+        return result
+
+    async def skip_current(self):
+        """跳过当前歌曲"""
+        if not self.streamer or not self.playlist_manager:
+            logger.error("推流服务未启动，无法跳过歌曲")
+            return None, None
+
+        old, new = self.playlist_manager.skip_current()
+        if old:
+            logger.info(f"已跳过歌曲: {os.path.basename(old)}")
+
+            # 获取真实的歌曲名称信息
+            old_song_name = os.path.basename(old)
+            new_song_name = None
+
+            # 尝试获取歌曲的真实名称
+            if old in self.playlist_manager.songs_info:
+                old_info = self.playlist_manager.songs_info[old]
+                old_song_name = f"{old_info.get('song_name', '')} - {old_info.get('artist_name', '')}"
+
+            # 如果有下一首歌，获取其名称
+            if new:
+                if new in self.playlist_manager.songs_info:
+                    new_info = self.playlist_manager.songs_info[new]
+                    new_song_name = f"{new_info.get('song_name', '')} - {new_info.get('artist_name', '')}"
+                else:
+                    new_song_name = os.path.basename(new)
+
+                # 已有下一首歌，但不是通过message_callback通知的（那个是在_audio_loop中），这里就不用通知了
+
+        return old, new
+
+    async def list_songs(self):
+        """获取播放列表"""
+        if not self.streamer or not self.playlist_manager:
+            logger.error("推流服务未启动，无法获取播放列表")
+            return []
+
+        return self.playlist_manager.list_songs()
+
+    async def stop(self):
+        """停止音频推流服务"""
+        exit_due_to_empty_playlist = False
+        success = False
+        try:
+            if self.streamer:
+                # 检查是否因为播放列表为空而停止
+                exit_due_to_empty_playlist = getattr(self.streamer, 'exit_due_to_empty_playlist', False)
+                await self.streamer.stop()
+                self.streamer = None
+                self.playlist_manager = None
+                logger.info("增强型音频推流服务已停止")
+                success = True
+            return success, exit_due_to_empty_playlist
+        except Exception as e:
+            logger.error(f"停止音频推流时出错: {e}")
+            # 添加更详细的错误信息
+            import traceback
+            logger.error(f"详细错误: {traceback.format_exc()}")
+            return success, exit_due_to_empty_playlist
+
+    async def update_volume(self, new_volume):
+        """
+        更新音量设置，并保存到配置文件
+        
+        :param new_volume: 新的音量值，字符串类型
+        :return: 是否成功更新
+        """
+        try:
+            # 确保有日志记录器
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            # 如果streamer已经初始化，更新它的音量
+            if self.streamer:
+                success = await self.streamer.update_volume(new_volume)
+                if not success:
+                    return False
+                
+            # 更新自身存储的音量
+            self.volume = new_volume
+            
+            # 更新配置文件
+            config = open_file('./config/config.json')
+            if config:
+                config['ffmpge_volume'] = new_volume
+                try:
+                    with open('./config/config.json', 'w', encoding='utf-8') as f:
+                        json.dump(config, f, ensure_ascii=False, indent=2)
+                    logger.info(f"音量已更新为 {new_volume} 并保存到配置文件")
+                except Exception as e:
+                    logger.error(f"保存音量设置到配置文件时出错: {e}")
+                    return False
+            
+            return True
+        except Exception as e:
+            logger.error(f"更新音量时出错: {e}")
+            return False
