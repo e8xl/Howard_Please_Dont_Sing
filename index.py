@@ -332,7 +332,7 @@ async def menu(msg: Message):
         Module.Section('帮我Github点个Star吧~', Element.Button('让我看看', 'https://www.8xl.icu', Types.Click.LINK)))
     c3.append(Module.Section('赞助一下吧~', Element.Button("赞助一下", 'https://afdian.com/a/888xl', Types.Click.LINK)))
     c3.append(Module.Section('加入服务器反馈BUG（积极反馈 球球了）',
-                             Element.Button("加入服务器", 'https://kook.vip/fYM28v', Types.Click.LINK)))
+                             Element.Button("加入服务器", 'https://kook.vip/MnAt2Z', Types.Click.LINK)))
     """
     在线一言API会导致菜单响应速度过慢 参考服务器与API调用所影响 可以删除下面c3.append到KMD)))
     """
@@ -586,7 +586,8 @@ async def neteasemusic_stream(msg: Message, *args):
                 enhanced_streamer = core.EnhancedAudioStreamer(
                     connection_info=join_result,
                     message_obj=msg,
-                    message_callback=message_callback
+                    message_callback=message_callback,
+                    channel_id=target_channel_id
                 )
                 success = await enhanced_streamer.start()
                 if not success:
@@ -785,15 +786,36 @@ async def neteasemusic_stream(msg: Message, *args):
 
 # 添加一个查看当前播放列表的命令
 @bot.command(name="list", aliases=["列表", "歌单"])
-async def list_playlist(msg: Message):
+async def list_playlist(msg: Message, channel_id: str = ""):
     try:
-        # 获取用户所在的语音频道
-        user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
-        if not user_channels:
-            await msg.reply('请先加入一个语音频道后再使用此功能')
+        target_channel_id = None
+        
+        # 如果没有提供channel_id参数，则获取用户所在的语音频道
+        if not channel_id:
+            user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
+            if not user_channels:
+                await msg.reply('您当前不在任何语音频道中。请先加入一个语音频道，或提供频道ID作为参数，例如：`list 频道ID`')
+                return
+            target_channel_id = user_channels[0].id
+        else:
+            # 使用提供的频道ID
+            target_channel_id = channel_id.strip()
+
+        # 获取当前活跃频道列表
+        alive_data = await core.get_alive_channel_list()
+        if 'error' in alive_data:
+            await msg.reply(f"获取频道列表时发生错误: {alive_data['error']}")
             return
 
-        target_channel_id = user_channels[0].id
+        # 检测机器人是否已在目标频道
+        is_in_channel, error = core.is_bot_in_channel(alive_data, target_channel_id)
+        if error:
+            await msg.reply(f"检查频道状态时发生错误: {error}")
+            return
+            
+        if not is_in_channel:
+            await msg.reply(f"机器人当前不在频道 {target_channel_id} 中")
+            return
 
         # 检查是否有播放列表
         if target_channel_id not in playlist_tasks or playlist_tasks[target_channel_id] is None:
@@ -809,7 +831,7 @@ async def list_playlist(msg: Message):
             return
 
         # 构建消息
-        message_text = "当前播放列表：\n"
+        message_text = f"频道 {target_channel_id} 的当前播放列表：\n"
         for song in songs_list:
             message_text += f"- {song}\n"
 
@@ -821,15 +843,36 @@ async def list_playlist(msg: Message):
 
 # 添加一个跳过当前歌曲的命令
 @bot.command(name="skip", aliases=["跳过", "下一首"])
-async def skip_song(msg: Message):
+async def skip_song(msg: Message, channel_id: str = ""):
     try:
-        # 获取用户所在的语音频道
-        user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
-        if not user_channels:
-            await msg.reply('请先加入一个语音频道后再使用此功能')
+        target_channel_id = None
+        
+        # 如果没有提供channel_id参数，则获取用户所在的语音频道
+        if not channel_id:
+            user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
+            if not user_channels:
+                await msg.reply('您当前不在任何语音频道中。请先加入一个语音频道，或提供频道ID作为参数，例如：`skip 频道ID`')
+                return
+            target_channel_id = user_channels[0].id
+        else:
+            # 使用提供的频道ID
+            target_channel_id = channel_id.strip()
+
+        # 获取当前活跃频道列表
+        alive_data = await core.get_alive_channel_list()
+        if 'error' in alive_data:
+            await msg.reply(f"获取频道列表时发生错误: {alive_data['error']}")
             return
 
-        target_channel_id = user_channels[0].id
+        # 检测机器人是否已在目标频道
+        is_in_channel, error = core.is_bot_in_channel(alive_data, target_channel_id)
+        if error:
+            await msg.reply(f"检查频道状态时发生错误: {error}")
+            return
+            
+        if not is_in_channel:
+            await msg.reply(f"机器人当前不在频道 {target_channel_id} 中")
+            return
 
         # 检查是否有播放列表
         if target_channel_id not in playlist_tasks or playlist_tasks[target_channel_id] is None:
@@ -867,11 +910,11 @@ async def skip_song(msg: Message):
         # 构建消息
         if new:
             # 只需显示即将播放的歌曲，不显示已跳过的歌曲
-            await msg.reply(f'即将播放: {new_song_name}')
+            await msg.reply(f'频道 {target_channel_id} 即将播放: {new_song_name}')
             # 记录完整信息到日志
-            logger.info(f'已跳过: {old_song_name}\n即将播放: {new_song_name}')
+            logger.info(f'频道 {target_channel_id} 已跳过: {old_song_name}\n即将播放: {new_song_name}')
         else:
-            await msg.reply(f'已跳过: {old_song_name}\n播放列表已播放完毕')
+            await msg.reply(f'频道 {target_channel_id} 已跳过: {old_song_name}\n播放列表已播放完毕')
 
     except Exception as e:
         await msg.reply(f"跳过歌曲时发生错误: {e}")
@@ -918,7 +961,8 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
                 enhanced_streamer = core.EnhancedAudioStreamer(
                     connection_info=join_result,
                     message_obj=msg,
-                    message_callback=message_callback
+                    message_callback=message_callback,
+                    channel_id=target_channel_id
                 )
                 success = await enhanced_streamer.start()
                 if not success:

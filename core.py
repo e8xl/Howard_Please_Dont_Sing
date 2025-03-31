@@ -389,13 +389,14 @@ class AudioStreamer:
 class EnhancedAudioStreamer:
     """增强型音频流媒体类，支持播放列表管理"""
 
-    def __init__(self, connection_info, message_obj=None, message_callback=None):
+    def __init__(self, connection_info, message_obj=None, message_callback=None, channel_id=None):
         """
         初始化增强型音频推流
         
         :param connection_info: 从KOOK API获取的连接信息
         :param message_obj: 原始消息对象，用于回复
         :param message_callback: 消息回调函数，用于发送通知
+        :param channel_id: 频道ID，用于创建唯一的管道名称
         """
         if not connection_info:
             raise ValueError("connection_info 不能为空")
@@ -418,6 +419,7 @@ class EnhancedAudioStreamer:
         self.connection_info = connection_info
         self.message_obj = message_obj
         self.message_callback = message_callback
+        self.channel_id = channel_id  # 保存频道ID
         self.rtp_url = self._build_rtp_url()
         self.streamer = None
         self.playlist_manager = None
@@ -453,7 +455,8 @@ class EnhancedAudioStreamer:
                 bitrate=bitrate_k,
                 message_obj=self.message_obj,
                 message_callback=self.message_callback,
-                volume=self.volume  # 传递音量参数
+                volume=self.volume,  # 传递音量参数
+                channel_id=self.channel_id  # 传递频道ID给FFmpegPipeStreamer
             )
 
             # 获取播放列表管理器

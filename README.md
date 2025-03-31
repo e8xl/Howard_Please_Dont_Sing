@@ -15,7 +15,7 @@ About KookAPP Music BOT from [khl.py](https://github.com/TWT233/khl.py)
 ### 网易平台API使用[NeteaseCloudMusicApi](https://gitlab.com/Binaryify/neteasecloudmusicapi)
 
 ---
-Cursor真无敌了。。也可能是Claude3.7太猛了 已经完成了ffmpeg解码+推流双进程处理的工作 实现了 StreamTools
+Cursor真无敌 已经完成基本推流功能。
 
 ---
 
@@ -23,12 +23,16 @@ Cursor真无敌了。。也可能是Claude3.7太猛了 已经完成了ffmpeg解�
 
 ## 📝 Pending Tasks
 
-- [ ] 多文件（歌单列表）多频道推流功能
-- [ ] 内存控制 对AudioLib的数据大小控制
+- [ ] 歌曲播放时的卡片显示
+- [ ] 歌曲播放时的歌词显示
+- [ ] 歌曲播放时的进度条显示
+- [ ] 支持导入网易云歌单
 
 ## ✅ Completed Tasks
 
 - [x] 多频道单文件独立推流功能
+- [x] 多文件（歌单列表）多频道推流功能
+- [x] 内存控制 对AudioLib的数据大小控制
 
 ***
 项目名称是因为我的朋友Howard经常喜欢在打游戏的时候激情演唱他喜欢的歌曲  
@@ -103,7 +107,8 @@ pip install -r requirements.txt
 ```json
 {
   "token": "KookdeveloperbotToken",
-  "amap_api_key": "Gaode_WeatherAPI"
+  "amap_api_key": "Gaode_WeatherAPI",
+  "ffmpge_volume": "0.8"
 }
 ```
 

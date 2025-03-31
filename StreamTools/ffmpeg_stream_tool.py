@@ -220,11 +220,12 @@ class PlaylistManager:
 class FFmpegPipeStreamer:
     """FFmpeg管道流媒体播放器"""
 
-    def __init__(self, rtp_url, bitrate=None, message_obj=None, message_callback=None, volume="0.8"):
+    def __init__(self, rtp_url, bitrate=None, message_obj=None, message_callback=None, volume="0.8", channel_id=None):
         self.rtp_url = rtp_url
         # 使用传入的bitrate或默认值
         self.bitrate = bitrate if bitrate else BITRATE
         self.playlist_manager = PlaylistManager()
+        self.channel_id = channel_id or "default"  # 使用提供的channel_id或默认值
         self.pipe_path = self._get_pipe_path()
         self.ffmpeg_process_player = None
         self.ffmpeg_process_streamer = None
@@ -246,13 +247,12 @@ class FFmpegPipeStreamer:
         self.is_first_song = True
         print(f"初始化FFmpegPipeStreamer，推流地址: {rtp_url}，比特率: {self.bitrate}，音量: {self.volume}")
 
-    @staticmethod
-    def _get_pipe_path():
-        """获取管道路径"""
+    def _get_pipe_path(self):
+        """获取管道路径，使用channel_id确保唯一性"""
         if platform.system() == 'Windows':
-            return r'\\.\pipe\audio_pipe'
+            return fr'\\.\pipe\audio_pipe_{self.channel_id}'
         else:
-            return '/tmp/audio_pipe'
+            return f'/tmp/audio_pipe_{self.channel_id}'
 
     async def start(self):
         """启动FFmpeg进程"""
