@@ -341,7 +341,7 @@ class FFmpegPipeStreamer:
                         self.exit_due_to_empty_playlist = True
                         # 标记音频循环已停止
                         self._running = False
-                        print("已设置exit_due_to_empty_playlist为True，音频循环已标记为停止")
+                        print(f"已设置exit_due_to_empty_playlist为True（频道将自动退出），音频循环已标记为停止")
                         break
                     await asyncio.sleep(1)  # 等待1秒再检查
                     continue

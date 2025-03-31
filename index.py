@@ -53,6 +53,7 @@ async def monitor_streamer_status(msg, channel_id):
     try:
         # 等待5秒钟，确保推流器状态已更新
         await asyncio.sleep(5)
+        logger.info(f"开始监控频道 {channel_id} 的推流器状态")
 
         # 持续检查推流器状态
         while channel_id in playlist_tasks:
@@ -97,8 +98,7 @@ async def monitor_streamer_status(msg, channel_id):
                 break
 
             # 检查推流器是否因为播放列表为空而退出
-            if hasattr(enhanced_streamer.streamer,
-                       'exit_due_to_empty_playlist') and enhanced_streamer.streamer.exit_due_to_empty_playlist:
+            if hasattr(enhanced_streamer.streamer, 'exit_due_to_empty_playlist') and enhanced_streamer.streamer.exit_due_to_empty_playlist:
                 # 推流器已设置自动退出标志
                 logger.info(f"检测到频道 {channel_id} 的推流器设置了空列表退出标志，准备退出频道")
 
@@ -110,14 +110,15 @@ async def monitor_streamer_status(msg, channel_id):
 
                 # 等待10秒给用户添加歌曲的机会，但分成多次短等待，每次检查播放列表
                 empty_playlist = True
-                for _ in range(5):  # 分5次等待，每次2秒
+                for i in range(5):  # 分5次等待，每次2秒
+                    logger.info(f"等待用户添加歌曲：第{i+1}次检查，剩余{10-i*2}秒")
                     await asyncio.sleep(2)
 
                     # 重新检查播放列表状态
                     if channel_id in playlist_tasks:
                         enhanced_streamer = playlist_tasks[channel_id]
                         songs_list = await enhanced_streamer.list_songs()
-
+                        
                         # 如果用户已添加新歌
                         if songs_list:
                             # 重置退出标志
@@ -605,6 +606,8 @@ async def neteasemusic_stream(msg: Message, *args):
 
                 # 创建监控任务
                 if target_channel_id not in auto_exit_tasks:
+                    # 确保监控任务能持续追踪推流器状态直到自动退出
+                    logger.info(f"为频道 {target_channel_id} 创建监控任务")
                     task = asyncio.create_task(monitor_streamer_status(msg, target_channel_id))
                     auto_exit_tasks[target_channel_id] = task
 
@@ -656,13 +659,13 @@ async def neteasemusic_stream(msg: Message, *args):
                                 stream_tasks.pop(target_channel_id, None)
                     return
 
-                # 使用第一首搜索结果的歌曲下载
-                first_song = search_results.split('\n')[0]
-                # await msg.reply(f"已找到歌曲：{first_song}，准备下载...")
-                logger.info(f"已找到歌曲：{first_song}，准备下载...")
+                # 使用第一首搜索结果的歌曲ID直接下载，避免再次搜索
+                first_song = search_results["formatted_list"].split('\n')[0]
+                first_song_id = search_results["first_song_id"]
+                logger.info(f"已找到歌曲：{first_song}，准备下载 ID: {first_song_id}")
 
-                # 下载音乐
-                songs = await NeteaseAPI.download_music(first_song)
+                # 使用ID直接下载，避免再次搜索
+                songs = await NeteaseAPI.download_music_by_id(first_song_id)
             except Exception as e:
                 error_msg = str(e)
                 if NeteaseAPI.is_api_connection_error(error_msg):
@@ -717,12 +720,12 @@ async def neteasemusic_stream(msg: Message, *args):
         is_first_song = await enhanced_streamer.add_song(audio_path, songs)
 
         # 如果推流器停止了但仍在字典中，确保它重新开始
-        if hasattr(enhanced_streamer,
-                   'streamer') and enhanced_streamer.streamer and not enhanced_streamer.streamer._running:
+        if hasattr(enhanced_streamer, 'streamer') and enhanced_streamer.streamer and not enhanced_streamer.streamer._running:
             logger.info(f"检测到推流器已停止但仍在字典中，尝试重新启动推流器")
             try:
                 # 尝试重新启动音频循环
                 enhanced_streamer.streamer._running = True
+                enhanced_streamer.streamer.exit_due_to_empty_playlist = False  # 确保重置退出标志
                 asyncio.create_task(enhanced_streamer.streamer._audio_loop())
                 logger.info(f"已重新启动推流器的音频循环")
             except Exception as e:
@@ -761,6 +764,12 @@ async def neteasemusic_stream(msg: Message, *args):
 
         # 只向用户发送简化的消息
         await msg.reply(user_message)
+
+        # 确保监控任务存在且正常运行
+        if target_channel_id not in auto_exit_tasks or auto_exit_tasks[target_channel_id].done():
+            logger.info(f"重新创建频道 {target_channel_id} 的监控任务")
+            task = asyncio.create_task(monitor_streamer_status(msg, target_channel_id))
+            auto_exit_tasks[target_channel_id] = task
 
     except asyncio.CancelledError:
         # 处理被取消的任务
@@ -929,6 +938,8 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
 
                 # 创建监控任务
                 if target_channel_id not in auto_exit_tasks:
+                    # 确保监控任务能持续追踪推流器状态直到自动退出
+                    logger.info(f"为频道 {target_channel_id} 创建监控任务")
                     task = asyncio.create_task(monitor_streamer_status(msg, target_channel_id))
                     auto_exit_tasks[target_channel_id] = task
 
@@ -983,12 +994,13 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
                                 stream_tasks.pop(target_channel_id, None)
                     return
 
-                # 使用第一首搜索结果的歌曲下载
-                first_song = search_results.split('\n')[0]
-                await msg.reply(f"已找到歌曲：{first_song}，准备下载...")
+                # 使用第一首搜索结果的歌曲ID直接下载，避免再次搜索
+                first_song = search_results["formatted_list"].split('\n')[0]
+                first_song_id = search_results["first_song_id"]
+                logger.info(f"已找到歌曲：{first_song}，准备下载 ID: {first_song_id}")
 
-                # 下载音乐
-                songs = await NeteaseAPI.download_music(first_song)
+                # 使用ID直接下载，避免再次搜索
+                songs = await NeteaseAPI.download_music_by_id(first_song_id)
             except Exception as e:
                 error_msg = str(e)
                 if NeteaseAPI.is_api_connection_error(error_msg):
@@ -1043,12 +1055,12 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
         is_first_song = await enhanced_streamer.add_song(audio_path, songs)
 
         # 如果推流器停止了但仍在字典中，确保它重新开始
-        if hasattr(enhanced_streamer,
-                   'streamer') and enhanced_streamer.streamer and not enhanced_streamer.streamer._running:
+        if hasattr(enhanced_streamer, 'streamer') and enhanced_streamer.streamer and not enhanced_streamer.streamer._running:
             logger.info(f"检测到推流器已停止但仍在字典中，尝试重新启动推流器")
             try:
                 # 尝试重新启动音频循环
                 enhanced_streamer.streamer._running = True
+                enhanced_streamer.streamer.exit_due_to_empty_playlist = False  # 确保重置退出标志
                 asyncio.create_task(enhanced_streamer.streamer._audio_loop())
                 logger.info(f"已重新启动推流器的音频循环")
             except Exception as e:
@@ -1081,6 +1093,12 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
                     message_text += f"\n- {song}"
 
         await msg.reply(message_text)
+        
+        # 确保监控任务存在且正常运行
+        if target_channel_id not in auto_exit_tasks or auto_exit_tasks[target_channel_id].done():
+            logger.info(f"重新创建频道 {target_channel_id} 的监控任务")
+            task = asyncio.create_task(monitor_streamer_status(msg, target_channel_id))
+            auto_exit_tasks[target_channel_id] = task
 
     except asyncio.CancelledError:
         # 处理被取消的任务
@@ -1099,35 +1117,30 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
 # region 网易API测试部分
 @bot.command(name="search", aliases=["搜索", "s"])
 async def s1_command(msg: Message, *args):
+    """搜索歌曲"""
+    keyword = " ".join(args).strip()
+    if not keyword:
+        await msg.reply("请提供要搜索的歌曲名")
+        return
+
+    # 使用NeteaseAPI进行搜索
     try:
-        if not args:
-            await msg.reply("参数缺失，请提供一个搜索关键字，例如：s1 周杰伦")
+        search_results = await NeteaseAPI.search_netease_music(keyword)
+        if search_results == "未找到相关音乐":
+            await msg.reply("未找到相关音乐")
             return
-
-        keyword = " ".join(args)  # 把空格后的所有内容拼接成一个字符串
-        await msg.reply(f"正在搜索关键字: {keyword}")
-        songs = await NeteaseAPI.search_netease_music(keyword)
-
-        cm = CardMessage()
-        c3 = Card(
-            Module.Header('搜索结果如下：'))
-        c3.append(
-            Module.Container(Element.Image(src=msg.author.avatar)))
-        c3.append(Module.Divider())  # 分割线
-        text = f"{songs}"
-        c3.append(Module.Section(Element.Text(text, Types.Text.KMD)))
-        c3.append(Module.Context(
-            Element.Text(f"{await local_hitokoto()}", Types.Text.KMD)  # 插入一言功能
-        ))
-        cm.append(c3)
-        await msg.reply(cm)
-
+        
+        # 只返回格式化的列表部分
+        formatted_results = search_results["formatted_list"]
+        # 分割获取第一首歌
+        first_song = formatted_results.split('\n')[0]
+        await msg.reply(f"搜索结果：\n{formatted_results}\n\n点歌指令示例：点歌 {first_song}")
     except Exception as e:
         error_msg = str(e)
         if NeteaseAPI.is_api_connection_error(error_msg):
             await msg.reply(NeteaseAPI.get_api_error_message())
         else:
-            await msg.reply(f"请检查API是否启动！若已经启动请报告开发者。 {e}")
+            await msg.reply(f"搜索失败: {e}")
 
 
 # 下载（测试）

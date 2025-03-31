@@ -46,6 +46,9 @@ async def search_netease_music(keyword: str):
                 if data['code'] == 200:
                     songs = data['result']['songs']
                     if songs:
+                        # 获取第一首歌曲的ID
+                        first_song_id = str(songs[0]['id'])
+                        
                         # 格式化为指定的字符串格式，每行一首歌曲
                         formatted_songs = "\n".join([
                             # f"歌曲ID:{song['id']} 歌名:{song['name']} 歌手:{song['artists'][0]['name']}"
@@ -53,7 +56,12 @@ async def search_netease_music(keyword: str):
                             for song in songs[:15]  # 限制为最多15条
                         ])
                         print(songs)
-                        return formatted_songs
+                        
+                        # 返回包含歌曲列表和第一首歌曲ID的字典
+                        return {
+                            "formatted_list": formatted_songs,
+                            "first_song_id": first_song_id
+                        }
                     else:
                         return "未找到相关音乐"
                 else:
@@ -304,6 +312,7 @@ async def download_music(keyword: str):
                 relative_path = "./AudioLib"
                 absolute_path = os.path.abspath(relative_path)
 
+                # 直接使用已获取的song_id，不需要再次搜索
                 async with session.get(
                         f"http://localhost:3000/song/download/url/v1?id={song_id}&level=higher") as download_resp:
                     download_data = await download_resp.json()
