@@ -9,6 +9,7 @@ import random
 import shlex
 import subprocess
 from collections import deque
+import time
 
 # 可以修改的RTP推流地址
 RTP_URL = "rtp://127.0.0.1:7890"
@@ -213,6 +214,8 @@ class PlaylistManager:
 
         # 更新当前歌曲和歌曲信息
         self.current_song = next_song
+        # 记录歌曲开始播放的时间
+        self.current_song_start_time = time.time()
 
         # 首先检查是否有预先存储的信息，否则使用ffprobe获取
         if self.current_song in self.songs_info:
@@ -285,9 +288,13 @@ class PlaylistManager:
 
             # 重置当前歌曲，这样get_next_song不会重复播放
             self.current_song = None
+            # 重置开始时间
+            self.current_song_start_time = 0
         else:
             # 非单曲循环模式，直接重置当前歌曲
             self.current_song = None
+            # 重置开始时间
+            self.current_song_start_time = 0
 
             # 将跳过的歌曲添加到已播放列表（如果处于列表循环模式）
             if self.play_mode == "list_loop":
@@ -892,9 +899,27 @@ class PlaylistManager:
         Returns:
             float: 当前播放位置，如果无法获取则返回0
         """
-        # 简单实现，实际应从播放器获取
-        # 这里需要与播放器集成才能真正获取播放位置
-        return 0
+        # 如果没有当前播放的歌曲，返回0
+        if not self.current_song:
+            return 0
+            
+        # 如果播放时间尚未记录，返回0
+        if not hasattr(self, 'current_song_start_time'):
+            return 0
+            
+        # 计算已播放时间
+        elapsed_time = time.time() - self.current_song_start_time
+        
+        # 对时间进行合理性检查和限制
+        if elapsed_time < 0:
+            elapsed_time = 0
+            
+        # 获取歌曲总时长，确保不超过总时长
+        total_duration = self.get_song_duration(self.current_song)
+        if total_duration > 0 and elapsed_time > total_duration:
+            elapsed_time = total_duration
+            
+        return elapsed_time
 
     def get_song_duration(self, file_path):
         """获取歌曲时长

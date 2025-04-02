@@ -809,3 +809,68 @@ class EnhancedAudioStreamer:
         except Exception as e:
             print(f"清空播放列表时出错: {e}")
             return 0
+
+    async def get_current_progress(self):
+        """
+        获取当前播放歌曲的进度信息
+        
+        :return: 包含进度信息的字典，如果没有播放则返回None
+        """
+        try:
+            if not self.streamer or not self.playlist_manager:
+                return None
+                
+            # 获取当前播放的歌曲路径
+            current_audio = self.playlist_manager.get_current_audio()
+            if not current_audio:
+                return None
+                
+            # 获取当前播放位置（秒）
+            current_position = self.streamer.playlist_manager.get_play_position()
+            if current_position is None:
+                return None
+                
+            # 获取歌曲总时长
+            duration = self.playlist_manager.get_song_duration(current_audio)
+            
+            # 计算播放进度百分比
+            progress_percent = 0
+            if duration > 0:
+                progress_percent = min(100, (current_position / duration) * 100)
+                
+            # 获取歌曲信息
+            song_info = {}
+            if current_audio in self.playlist_manager.songs_info:
+                song_info = self.playlist_manager.songs_info[current_audio]
+            else:
+                # 如果没有详细信息，使用文件名
+                song_info = {
+                    'song_name': os.path.basename(current_audio),
+                    'artist_name': '未知艺术家'
+                }
+                
+            # 格式化时间 (MM:SS 格式)
+            def format_time(seconds):
+                if seconds is None:
+                    return "00:00"
+                minutes, seconds = divmod(int(seconds), 60)
+                return f"{minutes:02d}:{seconds:02d}"
+                
+            # 构建结果
+            result = {
+                'current_position': current_position,
+                'duration': duration,
+                'progress_percent': progress_percent,
+                'formatted_position': format_time(current_position),
+                'formatted_duration': format_time(duration),
+                'song_info': song_info
+            }
+            
+            return result
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"获取播放进度时出错: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None

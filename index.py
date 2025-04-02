@@ -414,6 +414,44 @@ def get_time():
     return time.strftime("%y-%m-%d %H:%M:%S", time.localtime())
 
 
+# 格式化时间为MM:SS格式
+def format_time(seconds):
+    """
+    将秒数格式化为MM:SS格式
+    
+    :param seconds: 秒数
+    :return: 格式化后的时间字符串
+    """
+    if seconds is None:
+        return "00:00"
+    minutes, seconds = divmod(int(seconds), 60)
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+# 创建进度条
+def get_progress_bar(current, total, bar_length=20):
+    """
+    创建文本进度条
+    
+    :param current: 当前位置
+    :param total: 总时长
+    :param bar_length: 进度条长度
+    :return: 进度条文本
+    """
+    if total <= 0:
+        return "▯" * bar_length
+
+    progress = min(1.0, current / total)
+    filled_length = int(bar_length * progress)
+
+    # 创建进度条
+    progress_bar = "▮" * filled_length + "▯" * (bar_length - filled_length)
+
+    # 添加百分比
+    percent = int(progress * 100)
+    return f"{progress_bar} {percent}%"
+
+
 start_time = get_time()
 
 
@@ -1675,9 +1713,82 @@ async def get_current_mode(msg: Message, channel_id: str = ""):
         await msg.reply(f"获取播放模式时发生错误: {e}")
 
 
-# endrigon
+@bot.command(name="progress", aliases=["进度", "播放进度"])
+async def show_progress(msg: Message, channel_id: str = ""):
+    """
+    显示当前播放歌曲的进度
+    
+    :param msg: 消息对象
+    :param channel_id: 频道ID，可选
+    """
+    try:
+        # 确定目标频道
+        target_channel_id = None
 
-# region 歌单管理功能
+        # 如果没有提供channel_id参数，则获取用户所在的语音频道
+        if not channel_id:
+            user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
+            if not user_channels:
+                await msg.reply('请先加入一个语音频道，或提供频道ID作为参数，例如：`progress 频道ID`')
+                return
+            target_channel_id = user_channels[0].id
+        else:
+            # 使用提供的频道ID
+            target_channel_id = channel_id.strip()
+
+        # 获取活跃频道列表，检查机器人是否在该频道
+        alive_data = await core.get_alive_channel_list()
+        if 'error' in alive_data:
+            await msg.reply(f"获取频道列表时发生错误: {alive_data['error']}")
+            return
+
+        # 检查机器人是否在频道中
+        is_in_channel, error = core.is_bot_in_channel(alive_data, target_channel_id)
+        if error:
+            await msg.reply(f"检查频道状态时发生错误: {error}")
+            return
+
+        if not is_in_channel:
+            await msg.reply(f"机器人不在该语音频道中。请使用 `join` 命令加入频道。")
+            return
+
+        # 获取对应频道的流媒体推送器
+        if target_channel_id not in playlist_tasks:
+            await msg.reply("当前没有正在播放的音乐。")
+            return
+
+        # 直接获取EnhancedAudioStreamer实例
+        enhanced_streamer = playlist_tasks[target_channel_id]
+
+        # 获取播放进度
+        progress_info = await enhanced_streamer.get_current_progress()
+
+        if not progress_info:
+            await msg.reply("当前没有正在播放的音乐或无法获取进度信息。")
+            return
+
+        # 构建歌曲信息
+        song_info = progress_info['song_info']
+        song_name = song_info.get('song_name', '未知歌曲')
+        artist_name = song_info.get('artist_name', '未知艺术家')
+
+        # 构建进度条
+        progress_percent = progress_info['progress_percent']
+        bar_length = 20  # 进度条长度
+        filled_length = int(bar_length * progress_percent / 100)
+        progress_bar = '▮' * filled_length + '▯' * (bar_length - filled_length)
+
+        # 构建回复消息
+        reply_message = f"🎵 **{song_name}** - {artist_name}\n"
+        reply_message += f"⏱️ {progress_info['formatted_position']} / {progress_info['formatted_duration']}\n"
+        reply_message += f"📊 {progress_bar} {progress_percent:.1f}%"
+
+        await msg.reply(reply_message)
+
+    except Exception as e:
+        await msg.reply(f"获取播放进度时发生错误: {e}")
+
+
 @bot.command(name="import", aliases=["导入歌单", "歌单导入"])
 async def import_playlist(msg: Message, playlist_url: str = "", play_mode: str = "", channel_id: str = ""):
     """
@@ -2164,6 +2275,15 @@ async def playing_songcard(msg: Message, channel_id: str = "", auto_mode: bool =
             if duration <= 0:
                 duration = 180  # 默认3分钟
 
+        # 获取当前播放进度
+        progress_info = await enhanced_streamer.get_current_progress()
+        current_position = 0
+        if progress_info:
+            current_position = progress_info['current_position']
+
+        # 计算剩余时间
+        remaining_time = max(0, duration - current_position)
+
         # 创建卡片
         cm = CardMessage()
         c3 = Card(
@@ -2178,8 +2298,17 @@ async def playing_songcard(msg: Message, channel_id: str = "", auto_mode: bool =
                         src=audio_url,  # 如果获取到了直链就使用，否则为空
                         title=song_name,
                         cover=pic_url),
+            # # 添加当前播放进度信息
+            # Module.Section(
+            #     Element.Text(f"播放进度：{format_time(current_position)} / {format_time(duration)}", Types.Text.KMD)
+            # ),
+            # # 添加进度条
+            # Module.Section(
+            #     Element.Text(get_progress_bar(current_position, duration), Types.Text.KMD)
+            # ),
+            # 使用剩余时间创建倒计时，而不是总时长
             Module.Countdown(datetime.now() +
-                             timedelta(seconds=int(duration)),
+                             timedelta(seconds=int(remaining_time)),
                              mode=Types.CountdownMode.SECOND),
             Module.Divider(),
             Module.Context(
@@ -2197,8 +2326,8 @@ async def playing_songcard(msg: Message, channel_id: str = "", auto_mode: bool =
 
             Module.Divider(),
             Module.Section(
-                Element.Text("👈点歌来自", type=Types.Text.KMD),
-                Element.Image(src=msg.author.avatar,size=Types.Size.SM,circle=True)
+                Element.Text("👈点歌用户", type=Types.Text.KMD),
+                Element.Image(src=msg.author.avatar, size=Types.Size.SM, circle=True)
 
             ),
             color="#6AC629")
