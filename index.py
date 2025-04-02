@@ -22,7 +22,7 @@ from funnyAPI import weather, local_hitokoto  # , get_hitokoto
 logger = logging.getLogger(__name__)
 
 # 按钮点击的锁，防止连续点击
-BUTTON_LOCKS = {}
+BUTTON_LOCKS = {}  # 格式: {'频道ID_操作类型': 时间戳}
 BUTTON_COOLDOWN = 5  # 按钮冷却时间（秒）
 
 
@@ -492,16 +492,16 @@ async def on_btn_clicked(_: Bot, e: Event):
         value = e.body.get('value', '')
         user_id = e.body['user_info']['id']
         user_nickname = e.body['user_info']['nickname']
-        
+
         # 获取目标频道ID (用于发送响应消息)
         target_id = e.body.get('target_id')
-        
+
         if not target_id:
             logger.error("无法获取target_id，按钮处理失败")
             return
-            
+
         logger.info(f"收到按钮点击：{value}，来自用户：{user_nickname}，响应频道：{target_id}")
-        
+
         # 获取频道对象，而不是使用频道ID字符串
         try:
             # 从频道ID获取真正的Channel对象
@@ -512,21 +512,38 @@ async def on_btn_clicked(_: Bot, e: Event):
         except Exception as fetch_ex:
             logger.error(f"获取频道对象失败: {fetch_ex}")
             return
-        
+
         # 按钮值格式：操作类型_频道ID
         parts = value.split('_', 1)
         action = parts[0]
         voice_channel_id = parts[1] if len(parts) > 1 else ""
-        
+
         if not voice_channel_id:
             await channel.send("操作失败：未提供有效的语音频道ID")
             return
-        
+
         # 检查该频道是否有活跃的播放列表
         if voice_channel_id not in playlist_tasks or playlist_tasks[voice_channel_id] is None:
             await channel.send("操作失败：找不到该频道的播放列表")
             return
-        
+
+        # 检查按钮锁
+        lock_key = f"{voice_channel_id}_{action}"
+        current_time = time.time()
+
+        if lock_key in BUTTON_LOCKS:
+            last_click_time = BUTTON_LOCKS[lock_key]
+            time_diff = current_time - last_click_time
+
+            if time_diff < BUTTON_COOLDOWN:
+                # 在冷却期内，拒绝请求并提示用户
+                remaining = round(BUTTON_COOLDOWN - time_diff, 1)
+                await channel.send(f"操作过于频繁，请等待 {remaining} 秒后再试")
+                return
+
+        # 更新锁状态
+        BUTTON_LOCKS[lock_key] = current_time
+
         # 处理按钮动作
         if action == "NEXT":
             # 处理"下一首"操作
@@ -535,38 +552,21 @@ async def on_btn_clicked(_: Bot, e: Event):
                 if enhanced_streamer:
                     # 直接调用底层的skip_current方法
                     old, new = await enhanced_streamer.skip_current()
-                    
+
                     if new:
                         # 获取下一首歌曲信息
                         playlist_manager = enhanced_streamer.playlist_manager
                         new_title = os.path.basename(new)
-                        
+
                         if new in playlist_manager.songs_info:
                             new_info = playlist_manager.songs_info[new]
                             new_title = f"{new_info.get('song_name', '')} - {new_info.get('artist_name', '')}"
-                        
-                        await channel.send(f"来自 {user_nickname} 的操作：已切换下一首\n即将播放: {new_title}")
-                        
-                        # 尝试更新播放卡片
-                        try:
-                            # 创建简单消息对象
-                            class SimpleMsg:
-                                def __init__(self):
-                                    self.ctx = type('obj', (object,), {
-                                        'channel': channel,
-                                    })
-                                    self.author = type('obj', (object,), {
-                                        'avatar': e.body['user_info'].get('avatar', '')
-                                    })
-                                    
-                                async def reply(self, content):
-                                    await channel.send(content)
-                            
-                            # 稍等一会，让播放器有时间切歌
-                            await asyncio.sleep(1.5)
-                            await playing_songcard(SimpleMsg(), voice_channel_id, auto_mode=True)
-                        except Exception as card_ex:
-                            logger.error(f"更新播放卡片时出错: {card_ex}")
+
+                        # 只发送简单的确认消息，不创建卡片
+                        await channel.send(f"来自 {user_nickname} 的操作：已切换到下一首歌曲")
+
+                        # 删除之前手动创建播放卡片的部分，让系统自动创建一个
+                        # 因为当歌曲实际开始播放时，系统会自动发送播放通知
                     else:
                         await channel.send(f"来自 {user_nickname} 的操作：已跳过当前歌曲，播放列表已播放完毕")
                 else:
@@ -574,7 +574,10 @@ async def on_btn_clicked(_: Bot, e: Event):
             except Exception as ex:
                 logger.error(f"执行跳过操作时出错: {ex}")
                 await channel.send(f"执行跳过操作时出错: {ex}")
-        
+
+                # 出错时释放锁
+                BUTTON_LOCKS.pop(lock_key, None)
+
         elif action == "CLEAR":
             # 处理"清空播放列表"操作
             try:
@@ -591,7 +594,10 @@ async def on_btn_clicked(_: Bot, e: Event):
             except Exception as ex:
                 logger.error(f"执行清空播放列表操作时出错: {ex}")
                 await channel.send(f"执行清空播放列表操作时出错: {ex}")
-        
+
+                # 出错时释放锁
+                BUTTON_LOCKS.pop(lock_key, None)
+
         elif action == "LOOP":
             # 处理"循环模式"操作
             try:
@@ -600,7 +606,7 @@ async def on_btn_clicked(_: Bot, e: Event):
                     # 获取当前模式
                     current_mode = await enhanced_streamer.get_play_mode()
                     next_mode = None
-                    
+
                     # 切换到下一个模式
                     if current_mode[0] == "sequential":
                         next_mode = "random"
@@ -610,7 +616,7 @@ async def on_btn_clicked(_: Bot, e: Event):
                         next_mode = "list_loop"
                     else:
                         next_mode = "sequential"
-                    
+
                     # 设置新模式
                     success = await enhanced_streamer.set_play_mode(next_mode)
                     if success:
@@ -623,38 +629,41 @@ async def on_btn_clicked(_: Bot, e: Event):
             except Exception as ex:
                 logger.error(f"执行切换播放模式操作时出错: {ex}")
                 await channel.send(f"执行切换播放模式操作时出错: {ex}")
-        
+
+                # 出错时释放锁
+                BUTTON_LOCKS.pop(lock_key, None)
+
         elif action == "EXIT":
             # 处理"退出频道"操作
             try:
                 # 发送开始退出的消息
                 await channel.send(f"来自 {user_nickname} 的操作：正在退出频道...")
-                
+
                 # 先取消所有相关任务
                 keep_alive_task = keep_alive_tasks.pop(voice_channel_id, None)
                 if keep_alive_task:
                     keep_alive_task.cancel()
                     logger.info(f"已取消频道 {voice_channel_id} 的保持活跃任务")
-                
+
                 stream_monitor_task = stream_monitor_tasks.pop(voice_channel_id, None)
                 if stream_monitor_task:
                     stream_monitor_task.cancel()
                     logger.info(f"已取消频道 {voice_channel_id} 的流监控任务")
-                
+
                 auto_exit_task = auto_exit_tasks.pop(voice_channel_id, None)
                 if auto_exit_task:
                     auto_exit_task.cancel()
                     logger.info(f"已取消频道 {voice_channel_id} 的自动退出任务")
-                
+
                 # 停止播放列表和推流
                 enhanced_streamer = playlist_tasks.pop(voice_channel_id, None)
                 if enhanced_streamer:
                     await enhanced_streamer.stop()
                     logger.info(f"已停止频道 {voice_channel_id} 的推流任务")
-                
+
                 # 清理其他任务
                 stream_tasks.pop(voice_channel_id, None)
-                
+
                 # 最后调用core的leave_channel方法
                 leave_result = await core.leave_channel(voice_channel_id)
                 if 'error' in leave_result:
@@ -663,13 +672,21 @@ async def on_btn_clicked(_: Bot, e: Event):
                 else:
                     await channel.send(f"来自 {user_nickname} 的操作：已成功退出频道")
                     logger.info(f"已成功退出频道: {voice_channel_id}")
+
+                # 退出成功后，移除该频道的所有锁
+                for k in list(BUTTON_LOCKS.keys()):
+                    if k.startswith(voice_channel_id):
+                        BUTTON_LOCKS.pop(k, None)
             except Exception as ex:
                 logger.error(f"执行退出频道操作时出错: {ex}")
                 try:
                     await channel.send(f"执行退出频道操作时出错: {ex}")
                 except:
                     logger.error("无法发送退出频道错误消息")
-        
+
+                # 出错时释放锁
+                BUTTON_LOCKS.pop(lock_key, None)
+
     except Exception as ex:
         logger.error(f"处理按钮点击事件时出错: {ex}")
         # 尝试发送错误消息
@@ -685,6 +702,17 @@ async def on_btn_clicked(_: Bot, e: Event):
                     logger.error(f"获取频道对象或发送错误消息失败: {channel_ex}")
         except Exception as send_ex:
             logger.error(f"发送错误消息失败: {send_ex}")
+
+        # 确保即使出错，也会释放所有相关的锁
+        try:
+            parts = value.split('_', 1)
+            if len(parts) > 1:
+                voice_channel_id = parts[1]
+                action = parts[0]
+                lock_key = f"{voice_channel_id}_{action}"
+                BUTTON_LOCKS.pop(lock_key, None)
+        except:
+            pass
 
 
 # region 基础功能
@@ -1284,23 +1312,8 @@ async def skip_song(msg: Message, channel_id: str = ""):
             # 跳过当前歌曲
             old, new = await enhanced_streamer.skip_current()
 
-            if old and new:
-                # 获取下一首歌曲名称
-                new_title = os.path.basename(new)
-
-                # 获取更好的歌曲名称（如果有）
-                if new in playlist_manager.songs_info:
-                    new_info = playlist_manager.songs_info[new]
-                    new_title = f"{new_info.get('song_name', '')} - {new_info.get('artist_name', '')}"
-
-                # 如果有下一首歌，将它添加到recently_added_songs队列中，避免重复通知
-                if new:
-                    playlist_manager.recently_added_songs.append(new)
-
-                # 构建消息
-                await msg.ctx.channel.send(f"频道 {target_channel_id} 即将播放: {new_title}")
-            elif old and not new:
-                # 没有下一首歌了
+            if old:
+                # 获取旧歌曲的名称
                 old_title = os.path.basename(old)
 
                 # 尝试获取更好的歌曲名称（如果有）
@@ -1308,7 +1321,13 @@ async def skip_song(msg: Message, channel_id: str = ""):
                     old_info = playlist_manager.songs_info[old]
                     old_title = f"{old_info.get('song_name', '')} - {old_info.get('artist_name', '')}"
 
-                await msg.ctx.channel.send(f"频道 {target_channel_id} 已跳过: {old_title}\n播放列表已播放完毕")
+                # 只发送已跳过的通知
+                if new:
+                    # 注意：这里不再发送"即将播放"的消息，让系统自动通知
+                    await msg.reply(f"已跳过: {old_title}")
+                else:
+                    # 没有下一首歌了
+                    await msg.reply(f"已跳过: {old_title}\n播放列表已播放完毕")
             else:
                 # 跳过失败
                 await msg.reply(f"频道 {target_channel_id} 跳过歌曲失败")
