@@ -1,40 +1,10 @@
-# Howard Please Don't Sing
+# Howard, Please Don't Sing
 
 8XL_Kook_Music_bot  
 About KookAPP Music BOT from [khl.py](https://github.com/TWT233/khl.py)
-***
-
-### 部分娱乐功能参照并修改自[Kook-Valorant-Bot](https://github.com/Valorant-Shop-CN/Kook-Valorant-Bot)<br>机器人功能主体来自[khl.py](https://github.com/TWT233/khl.py)
-
-### 当前机器人仅限Windows环境运行（核心问题就是二维码的生成扫描）<br>Linux环境请自行修改代码
-
-### 音频推流部分来自[Kook_VoiceAPI](https://github.com/e8xl/Kook_VoiceAPI)
-
-### 非常感谢「KOOK」开发者中心 的各位大佬们的帮助 难以言表感激之情！
-
-### 网易平台API使用[NeteaseCloudMusicApi](https://gitlab.com/Binaryify/neteasecloudmusicapi)
-
----
-Cursor真无敌 已经完成基本推流功能。
-
----
-
-# To-Do List
-
-## 📝 Pending Tasks
-
-- [ ] 歌曲播放时的卡片显示
-- [ ] 歌曲播放时的歌词显示
-- [ ] 歌曲播放时的进度条显示
-
-## ✅ Completed Tasks
-
-- [x] 多频道单文件独立推流功能
-- [x] 多文件（歌单列表）多频道推流功能
-- [x] 内存控制 对AudioLib的数据大小控制
-- [x] 支持导入网易云歌单
 
 ***
+
 项目名称是因为我的朋友Howard经常喜欢在打游戏的时候激情演唱他喜欢的歌曲  
 而我实在无能为力欣赏他的美妙歌喉 不得已寻找更为方便的点歌机器人 方便我们更为愉快的打游戏  
 因为之前用的[*KO-ON Bot*](https://github.com/Gunale0926/KO-ON-Bot)经常出现一些问题 但由于本人*技术力过低*
@@ -70,18 +40,19 @@ bot.command.update_prefixes(".")  # 修改引号内的内容为你的指令前�
 
 - 安装FFMPEG 到/Tools/ffmpeg/bin
 
-1. 解压[NeteaseCloudMusicApi](https://gitlab.com/Binaryify/neteasecloudmusicapi)的源代码文件到Tools/
+1. 解压[NeteaseCloudMusicApi](https://gitlab.com/Binaryify/neteasecloudmusicapi)的源代码文件到Tools/ (可能下不到了
+   我也不好分享。。)
 2. 到Node.js官网下载二进制版本 解压到/Tools Node版本无限制 大于18.0即可  
    请注意：需要保证 Tools/ 文件夹内文件结构为
 
-```shell
-Tools  
-{   
--- neteasecloudmusicapi-main  
--- node-v20.18.0-win-x64  
--- .../  
-}
-```
+   ```shell
+   Tools  
+   {   
+   -- neteasecloudmusicapi-main  
+   -- node-v20.18.0-win-x64  
+   -- .../  
+   }
+   ```
 
 3. 运行 Setup&Run_NeteaseAPI(Test).py 完成API的依赖安装和运行  
    ↑基本上没什么问题 但不保证所有系统都能操作成功 若失败请自行解决API问题  
@@ -97,32 +68,32 @@ Tools
 
 2. 安装依赖
 
-```shell
-pip install -r requirements.txt
-```
+   ```shell
+   pip install -r requirements.txt
+   ```
 
 3. 在项目文件夹内创建config文件夹 并于其中添加config.json文件 格式如下\
    amap_api_key为高德地图API 需自行申请 即可使用/we 天气功能
 
-```json
-{
-  "token": "KookdeveloperbotToken",
-  "amap_api_key": "Gaode_WeatherAPI",
-  "ffmpge_volume": "0.8"
-}
-```
+   ```json
+   {
+     "token": "KookdeveloperbotToken",
+     "amap_api_key": "Gaode_WeatherAPI",
+     "ffmpge_volume": "0.8"
+   }
+   ```
 
 4. 运行index.py
 
-```shell
-python index.py
-```
+   ```shell
+   python index.py
+   ```
 
 5. 机器人成功运行后在频道内输入指令
 
-```shell
-帮助
-```
+   ```shell
+   帮助
+   ```
 
 ## 小工具
 
@@ -130,7 +101,7 @@ python index.py
 
 ***你也可以用更简单的办法 这样比较麻烦但很直观 所有操作都是GUI形式的***
 
-在脚本目录Tools文件夹内CreateGame.py内运行运行机器人状态生成器<br>
+在脚本目录Tools文件夹内CreateGame.py内运行运行机器人状态生成器  
 需要提前配置config文件保证token正确 机器人可以正常运行
 之后在机器人所在任何文字频道内输入如下指令 机器人会在频道内返回你游戏ID 随后修改index.py使用
 
@@ -139,3 +110,33 @@ python index.py
 ```
 
 注:项目暂未支持webhook模式 若需使用webhook模式请参照[khl.py](https://github.com/TWT233/khl.py)自行修改代码
+
+
+---
+
+## 致谢
+
+- 部分娱乐功能参考自[Kook-Valorant-Bot](https://github.com/Valorant-Shop-CN/Kook-Valorant-Bot)
+- 音频推流部分基于[Kook_VoiceAPI](https://github.com/e8xl/Kook_VoiceAPI) (有点烂 其实就是封装了一下语音接口
+  等什么时候有时间把整个点歌机器人的核心封装了再发布)
+- 网易云音乐API使用[NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi)
+- 感谢「KOOK」开发者中心的各位大佬提供的帮助
+
+# To-Do List
+
+## 📝 Pending Tasks
+
+- [ ] 歌曲播放时的歌词显示
+
+## ✅ Completed Tasks
+
+- [x] 多频道单文件独立推流功能
+- [x] 多文件（歌单列表）多频道推流功能
+- [x] 内存控制 对AudioLib的数据大小控制
+- [x] 支持导入网易云歌单
+- [x] 歌曲播放时的卡片显示
+- [x] 歌曲播放时的进度条显示
+
+## 开源协议
+
+本项目采用 [MIT](LICENSE) 许可证开源。
