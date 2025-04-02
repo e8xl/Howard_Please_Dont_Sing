@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import time
+import math
 
 from VoiceAPI import KookVoiceClient, VoiceClientError
 from client_manager import get_client, remove_client, clients
@@ -539,6 +540,15 @@ class EnhancedAudioStreamer:
             if self.streamer:
                 # 检查是否因为播放列表为空而停止
                 exit_due_to_empty_playlist = getattr(self.streamer, 'exit_due_to_empty_playlist', False)
+                
+                # 在停止之前，先将running标志设为False，防止在停止过程中发送额外消息
+                if hasattr(self.streamer, '_running'):
+                    self.streamer._running = False
+                    
+                # 确保任何消息通知标志也被重置，防止发送额外消息
+                if hasattr(self.streamer, 'playlist_manager'):
+                    self.streamer.playlist_manager.current_song_notified = True
+                
                 await self.streamer.stop()
                 self.streamer = None
                 self.playlist_manager = None
@@ -634,80 +644,138 @@ class EnhancedAudioStreamer:
             print(f"获取播放模式时出错: {e}")
             return None
             
-    async def import_playlist(self, playlist_id, max_songs=20):
+    async def import_playlist(self, playlist_id, max_songs=20, channel_id: str = ""):
         """
         导入网易云音乐歌单
         
         :param playlist_id: 歌单ID
-        :param max_songs: 最大导入歌曲数量，默认20首
+        :param max_songs: 最大导入歌曲数量，设为0表示导入全部
+        :param channel_id: 频道ID，用于指定频道
         :return: 包含导入信息的字典
         """
         try:
             import logging
             logger = logging.getLogger(__name__)
             
+            # 确定目标频道
+            if not channel_id:
+                if self.message_obj:
+                    channel_id = getattr(self.message_obj, 'ctx', {}).get('channel_id', '')
+                    
+            if not channel_id:
+                return {"error": "未指定频道ID"}
+                
+            # 获取对应频道的流媒体推送器
             if not self.streamer or not self.playlist_manager:
                 logger.error("推流服务未启动，无法导入歌单")
                 return {"error": "推流服务未启动，无法导入歌单"}
+            
+            # 设置导入标志，避免导入过程中因播放列表为空而退出
+            self.streamer.is_importing = True
+            logger.info("已设置导入标志，防止在导入过程中退出")
                 
             # 导入NeteaseAPI
             import importlib
             NeteaseAPI = importlib.import_module("NeteaseAPI")
             
-            # 获取歌单详情
-            logger.info(f"正在获取歌单ID: {playlist_id} 的详情")
-            playlist_detail = await NeteaseAPI.get_playlist_detail(playlist_id)
-            
-            if "error" in playlist_detail:
-                logger.error(f"获取歌单详情失败: {playlist_detail['error']}")
-                return {"error": f"获取歌单详情失败: {playlist_detail['error']}"}
+            try:
+                # 获取歌单详情
+                logger.info(f"正在获取歌单ID: {playlist_id} 的详情")
+                playlist_detail = await NeteaseAPI.get_playlist_detail(playlist_id)
                 
-            # 保存歌单信息
-            self.playlist_manager.set_playlist_info(playlist_detail)
-            
-            # 提取歌单基本信息
-            playlist_info = self.playlist_manager.get_playlist_info()
-            if not playlist_info:
-                logger.error("解析歌单信息失败")
-                return {"error": "解析歌单信息失败"}
+                if "error" in playlist_detail:
+                    logger.error(f"获取歌单详情失败: {playlist_detail['error']}")
+                    return {"error": f"获取歌单详情失败: {playlist_detail['error']}"}
+                    
+                # 保存歌单信息
+                self.playlist_manager.set_playlist_info(playlist_detail)
                 
-            # 获取歌单中的歌曲列表
-            total_tracks = playlist_info['trackCount']
-            to_import = min(max_songs, total_tracks)
-            
-            logger.info(f"歌单 '{playlist_info['name']}' 共有 {total_tracks} 首歌曲，将导入前 {to_import} 首")
-            
-            # 获取歌曲详情
-            tracks_data = await NeteaseAPI.get_playlist_tracks(playlist_id, limit=to_import)
-            
-            if "error" in tracks_data:
-                logger.error(f"获取歌单歌曲列表失败: {tracks_data['error']}")
-                return {"error": f"获取歌单歌曲列表失败: {tracks_data['error']}"}
+                # 提取歌单基本信息
+                playlist_info = self.playlist_manager.get_playlist_info()
+                if not playlist_info:
+                    logger.error("解析歌单信息失败")
+                    return {"error": "解析歌单信息失败"}
+                    
+                # 获取歌单中的歌曲列表
+                total_tracks = playlist_info['trackCount']
                 
-            # 提取歌曲信息
-            tracks = tracks_data.get('songs', [])
-            
-            # 保存歌曲列表
-            self.playlist_manager.set_playlist_tracks(tracks)
-            
-            # 将歌曲添加到下载队列
-            added_count = self.playlist_manager.add_playlist_batch(tracks)
-            
-            logger.info(f"已将 {added_count} 首歌曲添加到下载队列")
-            
-            return {
-                "name": playlist_info['name'],
-                "id": playlist_info['id'],
-                "creator": playlist_info['creator'],
-                "description": playlist_info['description'],
-                "total_tracks": total_tracks,
-                "imported_tracks": added_count
-            }
+                # 确定要导入的歌曲数量
+                to_import = total_tracks if max_songs == 0 else min(max_songs, total_tracks)
+                
+                logger.info(f"歌单 '{playlist_info['name']}' 共有 {total_tracks} 首歌曲，将导入 {to_import} 首")
+                
+                # 分页获取歌曲列表
+                all_tracks = []
+                page_size = 100  # 网易API每页最多返回100首歌曲
+                
+                # 循环获取歌曲直到达到指定数量或获取完所有歌曲
+                for offset in range(0, to_import, page_size):
+                    # 计算当前页需要获取的歌曲数量
+                    current_limit = min(page_size, to_import - offset)
+                    
+                    logger.info(f"获取歌单歌曲列表，第 {offset//page_size + 1} 页，共 {math.ceil(to_import/page_size)} 页")
+                    tracks_data = await NeteaseAPI.get_playlist_tracks(playlist_id, limit=current_limit, offset=offset)
+                    
+                    if "error" in tracks_data:
+                        logger.error(f"获取歌单歌曲列表失败: {tracks_data['error']}")
+                        # 如果已获取一些歌曲，继续处理
+                        if all_tracks:
+                            logger.info(f"已获取 {len(all_tracks)} 首歌曲，将继续处理")
+                            break
+                        return {"error": f"获取歌单歌曲列表失败: {tracks_data['error']}"}
+                    
+                    # 提取歌曲信息并添加到总列表
+                    tracks = tracks_data.get('songs', [])
+                    all_tracks.extend(tracks)
+                    
+                    # 每次获取后等待一小段时间，避免过于频繁的API调用
+                    await asyncio.sleep(0.5)
+                    
+                    # 如果获取的数量不足，表示已经到达歌单末尾
+                    if len(tracks) < current_limit:
+                        logger.info(f"已到达歌单末尾，实际获取 {len(all_tracks)} 首歌曲")
+                        break
+                
+                logger.info(f"共获取 {len(all_tracks)} 首歌曲信息")
+                
+                # 保存歌曲列表到播放列表管理器
+                self.playlist_manager.set_playlist_tracks(all_tracks)
+                
+                # 重置播放列表管理器的状态，确保新歌单可以正确应用
+                # 清空当前播放列表，避免混合播放不同歌单的歌曲
+                self.playlist_manager.clear_playlist()
+                
+                # 将歌曲添加到播放系统
+                added_count = self.playlist_manager.add_playlist_batch(all_tracks)
+                
+                logger.info(f"已将 {added_count} 首歌曲添加到播放系统")
+                
+                # 导入完成，重置导入标志
+                self.streamer.is_importing = False
+                logger.info("导入完成，已重置导入标志")
+                
+                return {
+                    "name": playlist_info['name'],
+                    "id": playlist_info['id'],
+                    "creator": playlist_info['creator'],
+                    "description": playlist_info['description'],
+                    "total_tracks": total_tracks,
+                    "imported_tracks": len(all_tracks)
+                }
+            except Exception as e:
+                # 发生异常时也要重置导入标志
+                self.streamer.is_importing = False
+                logger.error(f"导入过程中发生异常，已重置导入标志: {e}")
+                raise
             
         except Exception as e:
             logger.error(f"导入歌单时出错: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            # 确保在任何情况下都重置导入标志
+            if hasattr(self, 'streamer') and self.streamer:
+                self.streamer.is_importing = False
+                logger.info("异常处理：已重置导入标志")
             return {"error": f"导入歌单时出错: {e}"}
             
     async def remove_song(self, index):

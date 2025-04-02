@@ -600,6 +600,8 @@ async def get_playlist_detail(playlist_id: str):
                 
                 return data
     except Exception as e:
+        if is_api_connection_error(str(e)):
+            return {"error": get_api_error_message()}
         return {"error": str(e)}
 
 async def get_playlist_tracks(playlist_id: str, limit: int = 20, offset: int = 0):
@@ -609,7 +611,7 @@ async def get_playlist_tracks(playlist_id: str, limit: int = 20, offset: int = 0
     Args:
         playlist_id: 歌单ID
         limit: 每次获取的歌曲数量，默认20首
-        offset: 偏移量，默认0
+        offset: 偏移量，默认0（第一首歌从0开始计数）
         
     Returns:
         歌单中的歌曲列表
@@ -623,14 +625,31 @@ async def get_playlist_tracks(playlist_id: str, limit: int = 20, offset: int = 0
         if not cookies:
             return {"error": "未登录，请通知开发者完成登录操作"}
         
+        # 确保参数有效
+        if limit <= 0:
+            limit = 20
+        if offset < 0:
+            offset = 0
+            
+        # 构建API URL，显式加入时间戳避免缓存
+        timestamp = int(asyncio.get_event_loop().time() * 1000)
+        api_url = f"http://localhost:3000/playlist/track/all?id={playlist_id}&limit={limit}&offset={offset}&timestamp={timestamp}"
+        
+        print(f"请求歌单tracks: {api_url}")
+        
         async with aiohttp.ClientSession(cookies=cookies) as session:
-            async with session.get(f"http://localhost:3000/playlist/track/all?id={playlist_id}&limit={limit}&offset={offset}") as resp:
+            async with session.get(api_url) as resp:
                 data = await resp.json()
                 if data['code'] != 200:
-                    raise Exception("获取歌单歌曲列表失败")
+                    raise Exception(f"获取歌单歌曲列表失败，错误码: {data['code']}")
+                
+                # 打印调试信息
+                print(f"获取到 {len(data.get('songs', []))} 首歌曲")
                 
                 return data
     except Exception as e:
+        if is_api_connection_error(str(e)):
+            return {"error": get_api_error_message()}
         return {"error": str(e)}
 
 # 解析网易云音乐歌单URL

@@ -31,6 +31,27 @@ async def message_callback(msg, message):
     :param message: 消息内容
     """
     try:
+        # 检查是否是过程性消息，如果是则只记录到日志中
+        process_messages = [
+            "正在获取歌单",
+            "将导入全部歌曲",
+            "正在从歌单",
+            "共有",
+            "首歌曲，将导入",
+            "正在尝试加入",
+            "机器人尚未加入频道",
+            "这可能需要较长时间",
+            "即将播放"
+        ]
+        
+        # 检查消息是否包含任何过程性提示
+        is_process_message = any(phrase in message for phrase in process_messages)
+        
+        if is_process_message:
+            # 只记录到日志，不发送给用户
+            logger.info(f"过程消息(未发送): {message}")
+            return
+            
         # 直接回复原始消息
         await msg.reply(message)
         logger.info(f"发送消息: {message}")
@@ -54,6 +75,9 @@ async def monitor_streamer_status(msg, channel_id):
         # 等待5秒钟，确保推流器状态已更新
         await asyncio.sleep(5)
         logger.info(f"开始监控频道 {channel_id} 的推流器状态")
+        
+        # 初始化空播放列表标志
+        empty_playlist = False
 
         # 持续检查推流器状态
         while channel_id in playlist_tasks:
@@ -116,24 +140,114 @@ async def monitor_streamer_status(msg, channel_id):
                     await asyncio.sleep(2)
 
                     # 重新检查播放列表状态
-                    if channel_id in playlist_tasks:
-                        enhanced_streamer = playlist_tasks[channel_id]
-                        songs_list = await enhanced_streamer.list_songs()
-
-                        # 如果用户已添加新歌
-                        if songs_list:
-                            # 重置退出标志
-                            if hasattr(enhanced_streamer.streamer, 'exit_due_to_empty_playlist'):
-                                enhanced_streamer.streamer.exit_due_to_empty_playlist = False
-                                logger.info(f"用户已添加新歌，已取消退出频道 {channel_id}")
-                                empty_playlist = False
-                                break
-
-                # 如果播放列表仍然为空，执行退出操作
-                if empty_playlist and channel_id in playlist_tasks:
+                    # 确保playlist_tasks中仍然有这个频道
+                    if channel_id not in playlist_tasks:
+                        # 频道可能已经被其他地方清理了
+                        logger.info(f"频道 {channel_id} 已不在播放列表任务中，终止监控")
+                        empty_playlist = False  # 避免后续操作
+                        break
+                        
                     enhanced_streamer = playlist_tasks[channel_id]
-                    songs_list = await enhanced_streamer.list_songs()
-                    if not songs_list:
+                    # 确认退出标志仍然为True
+                    if hasattr(enhanced_streamer.streamer, 'exit_due_to_empty_playlist') and not enhanced_streamer.streamer.exit_due_to_empty_playlist:
+                        logger.info(f"频道 {channel_id} 的退出标志已被取消，终止监控")
+                        empty_playlist = False
+                        break
+                        
+                    # 检查是否有真实的新歌曲加入
+                    has_real_songs = False
+                    
+                    # 检查播放列表和下载队列是否确实有内容
+                    if hasattr(enhanced_streamer.streamer, 'playlist_manager'):
+                        has_current_song = enhanced_streamer.streamer.playlist_manager.current_song is not None
+                        has_playlist_songs = len(enhanced_streamer.streamer.playlist_manager.playlist) > 0
+                        has_download_queue = len(enhanced_streamer.streamer.playlist_manager.download_queue) > 0
+                        has_temp_playlist = len(enhanced_streamer.streamer.playlist_manager.temp_playlist) > 0
+                        
+                        has_real_songs = has_current_song or has_playlist_songs or has_download_queue or has_temp_playlist
+                    
+                    # 仅当确实有歌曲时才取消退出
+                    if has_real_songs:
+                        # 重置退出标志
+                        if hasattr(enhanced_streamer.streamer, 'exit_due_to_empty_playlist'):
+                            enhanced_streamer.streamer.exit_due_to_empty_playlist = False
+                            logger.info(f"用户已添加新歌，已取消退出频道 {channel_id}")
+                            empty_playlist = False
+                            break
+                    else:
+                        logger.info(f"播放列表表面上有歌曲，但实际检查发现没有真正的歌曲，继续退出流程")
+
+                # 如果始终没有找到真实歌曲，强制执行退出，无需进一步检查
+                if empty_playlist:
+                    logger.info(f"等待结束，频道 {channel_id} 确认没有真实歌曲，强制执行退出操作")
+                    try:
+                        # 停止播放列表和推流任务
+                        if channel_id in playlist_tasks:
+                            enhanced_streamer = playlist_tasks.pop(channel_id, None)
+                            if enhanced_streamer:
+                                # 防止再次检查播放列表状态
+                                if hasattr(enhanced_streamer.streamer, '_running'):
+                                    enhanced_streamer.streamer._running = False
+                                await enhanced_streamer.stop()
+
+                        # 使用退出函数，强制执行离开
+                        leave_result = await core.leave_channel(channel_id)
+                        if 'error' in leave_result:
+                            logger.error(f"退出频道失败: {leave_result['error']}")
+                        else:
+                            logger.info(f"已成功退出频道: {channel_id}")
+                    except Exception as e:
+                        logger.error(f"退出频道时发生错误: {e}")
+                    finally:
+                        # 清理所有相关任务和引用
+                        task = keep_alive_tasks.pop(channel_id, None)
+                        if task:
+                            task.cancel()
+                        stream_tasks.pop(channel_id, None)
+                        stream_monitor_tasks.pop(channel_id, None)
+                        task = auto_exit_tasks.pop(channel_id, None)
+                        if task:
+                            task.cancel()
+                    # 直接退出循环，避免继续处理
+                    break
+
+            # 如果播放列表仍然为空，执行退出操作
+            if empty_playlist and channel_id in playlist_tasks:
+                enhanced_streamer = playlist_tasks[channel_id]
+                songs_list = await enhanced_streamer.list_songs()
+                
+                # 再次进行全面检查，确保播放列表确实为空
+                has_real_songs = False
+                if hasattr(enhanced_streamer.streamer, 'playlist_manager'):
+                    has_current_song = enhanced_streamer.streamer.playlist_manager.current_song is not None
+                    has_playlist_songs = len(enhanced_streamer.streamer.playlist_manager.playlist) > 0
+                    has_download_queue = len(enhanced_streamer.streamer.playlist_manager.download_queue) > 0
+                    has_temp_playlist = len(enhanced_streamer.streamer.playlist_manager.temp_playlist) > 0
+                    
+                    has_real_songs = has_current_song or has_playlist_songs or has_download_queue or has_temp_playlist
+                
+                # 有真实歌曲时，取消退出
+                if has_real_songs:
+                    logger.info(f"最终检查发现有歌曲，取消退出频道 {channel_id}")
+                    if hasattr(enhanced_streamer.streamer, 'exit_due_to_empty_playlist'):
+                        enhanced_streamer.streamer.exit_due_to_empty_playlist = False
+                    # 重置empty_playlist标志
+                    empty_playlist = False
+                    continue
+                
+                # 以下为原有逻辑，只有确认没有任何歌曲后才会执行
+                # 再次确认播放列表确实为空，避免误判断
+                if not songs_list or len(songs_list) == 0:
+                    # 最后确认下载队列也是空的
+                    has_pending_downloads = False
+                    if hasattr(enhanced_streamer.streamer, 'playlist_manager'):
+                        has_pending_downloads = (
+                            len(enhanced_streamer.streamer.playlist_manager.download_queue) > 0 or
+                            len(enhanced_streamer.streamer.playlist_manager.temp_playlist) > 0
+                        )
+                    
+                    if not has_pending_downloads:
+                        logger.info(f"最终确认：频道 {channel_id} 没有任何歌曲，执行退出操作")
                         # 执行退出操作 - 不能直接调用exit_command，需要手动执行退出逻辑
                         try:
                             # 停止播放列表和推流任务
@@ -852,78 +966,73 @@ async def list_playlist(msg: Message, channel_id: str = ""):
 # 添加一个跳过当前歌曲的命令
 @bot.command(name="skip", aliases=["跳过", "下一首"])
 async def skip_song(msg: Message, channel_id: str = ""):
+    """
+    跳过当前歌曲
+    
+    :param msg: 消息对象
+    :param channel_id: 频道ID，可选
+    """
     try:
+        # 确定目标频道
         target_channel_id = None
-
+        
         # 如果没有提供channel_id参数，则获取用户所在的语音频道
         if not channel_id:
             user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
             if not user_channels:
-                await msg.reply('您当前不在任何语音频道中。请先加入一个语音频道，或提供频道ID作为参数，例如：`skip 频道ID`')
+                await msg.reply(
+                    '您当前不在任何语音频道中。请先加入一个语音频道，或提供频道ID作为参数，例如：`skip 频道ID`')
                 return
             target_channel_id = user_channels[0].id
         else:
             # 使用提供的频道ID
             target_channel_id = channel_id.strip()
-
-        # 获取当前活跃频道列表
-        alive_data = await core.get_alive_channel_list()
-        if 'error' in alive_data:
-            await msg.reply(f"获取频道列表时发生错误: {alive_data['error']}")
-            return
-
-        # 检测机器人是否已在目标频道
-        is_in_channel, error = core.is_bot_in_channel(alive_data, target_channel_id)
-        if error:
-            await msg.reply(f"检查频道状态时发生错误: {error}")
-            return
-
-        if not is_in_channel:
-            await msg.reply(f"机器人当前不在频道 {target_channel_id} 中")
-            return
-
-        # 检查是否有播放列表
+            
+        # 检查该频道是否有活跃的播放列表
         if target_channel_id not in playlist_tasks or playlist_tasks[target_channel_id] is None:
-            await msg.reply('该频道没有活跃的播放列表')
+            await msg.reply(f'频道 {target_channel_id} 没有活跃的播放列表')
             return
-
-        # 跳过当前歌曲
+            
+        # 获取流媒体对象
         enhanced_streamer = playlist_tasks[target_channel_id]
-        old, new = await enhanced_streamer.skip_current()
-
-        if not old:
-            await msg.reply('当前没有正在播放的歌曲')
-            return
-
-        # 获取真实的歌曲名称
-        old_song_name = os.path.basename(old)
-        new_song_name = os.path.basename(new) if new else None
-
-        # 尝试从播放列表管理器获取歌曲信息
+        
+        # 获取播放列表管理器
         playlist_manager = enhanced_streamer.playlist_manager
-
-        # 获取旧歌曲信息
-        if old in playlist_manager.songs_info:
-            old_info = playlist_manager.songs_info[old]
-            old_song_name = f"{old_info.get('song_name', '')} - {old_info.get('artist_name', '')}"
-
-        # 获取新歌曲信息
-        if new and new in playlist_manager.songs_info:
-            new_info = playlist_manager.songs_info[new]
-            new_song_name = f"{new_info.get('song_name', '')} - {new_info.get('artist_name', '')}"
-
-            # 如果有下一首歌，将它添加到recently_added_songs集合中，避免重复通知
-            playlist_manager.recently_added_songs.add(new)
-
-        # 构建消息
-        if new:
-            # 只需显示即将播放的歌曲，不显示已跳过的歌曲
-            await msg.reply(f'频道 {target_channel_id} 即将播放: {new_song_name}')
-            # 记录完整信息到日志
-            logger.info(f'频道 {target_channel_id} 已跳过: {old_song_name}\n即将播放: {new_song_name}')
-        else:
-            await msg.reply(f'频道 {target_channel_id} 已跳过: {old_song_name}\n播放列表已播放完毕')
-
+        
+        # 获取当前播放的歌曲
+        old_song = playlist_manager.current_song
+        if not old_song:
+            await msg.reply(f"频道 {target_channel_id} 没有正在播放的歌曲")
+            return
+            
+        try:
+            # 跳过当前歌曲
+            old, new = await enhanced_streamer.skip_current()
+            
+            if old and new:
+                # 获取下一首歌曲名称
+                new_title = os.path.basename(new)
+                
+                # 获取更好的歌曲名称（如果有）
+                if new in playlist_manager.songs_info:
+                    new_info = playlist_manager.songs_info[new]
+                    new_title = f"{new_info.get('song_name', '')} - {new_info.get('artist_name', '')}"
+                    
+                # 如果有下一首歌，将它添加到recently_added_songs队列中，避免重复通知
+                if new:
+                    playlist_manager.recently_added_songs.append(new)
+                
+                # 构建消息
+                await msg.reply(f"频道 {target_channel_id} 即将播放: {new_title}")
+            elif old and not new:
+                # 没有下一首歌了
+                await msg.reply(f"频道 {target_channel_id} 已跳过: {os.path.basename(old)}\n播放列表已播放完毕")
+            else:
+                # 跳过失败
+                await msg.reply(f"频道 {target_channel_id} 跳过歌曲失败")
+        except Exception as e:
+            await msg.reply(f"跳过歌曲时发生错误: {e}")
+            
     except Exception as e:
         await msg.reply(f"跳过歌曲时发生错误: {e}")
 
@@ -1073,7 +1182,7 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
                                 task.cancel()
                             playlist_tasks.pop(target_channel_id, None)
                             stream_tasks.pop(target_channel_id, None)
-                return
+                    return
 
         # 检查下载结果是否为错误消息
         if "error" in songs:
@@ -1091,7 +1200,7 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
                             task.cancel()
                         playlist_tasks.pop(target_channel_id, None)
                         stream_tasks.pop(target_channel_id, None)
-            return
+                return
 
         # 如果下载成功，发送歌曲信息
         cache_status = "（使用本地缓存）" if songs.get("cached", False) else ""
@@ -1468,19 +1577,19 @@ async def get_current_mode(msg: Message, channel_id: str = ""):
 
 # region 歌单管理功能
 @bot.command(name="import", aliases=["导入歌单", "歌单导入"])
-async def import_playlist(msg: Message, playlist_url: str = "", max_songs: int = 20, channel_id: str = ""):
+async def import_playlist(msg: Message, playlist_url: str = "", play_mode: str = "", channel_id: str = ""):
     """
     导入网易云音乐歌单
 
     :param msg: 消息对象
     :param playlist_url: 歌单URL
-    :param max_songs: 最多导入的歌曲数量，默认20首
+    :param play_mode: 播放模式，可选值：顺序播放(sequential), 随机播放(random), 单曲循环(single), 列表循环(loop)
     :param channel_id: 频道ID，可选
     """
     try:
         # 检查是否提供了歌单URL
         if not playlist_url:
-            await msg.reply("请提供歌单URL，例如：`import https://music.163.com/playlist?id=13621716`")
+            await msg.reply("请提供歌单URL，例如：`import https://music.163.com/playlist?id=13621716`\n可选参数：播放模式 [顺序/随机/单曲/循环]，例如：`import 歌单URL 随机`")
             return
 
         # 提取歌单ID
@@ -1489,16 +1598,52 @@ async def import_playlist(msg: Message, playlist_url: str = "", max_songs: int =
             await msg.reply("无效的歌单URL，请提供正确的网易云音乐歌单链接")
             return
 
-        # 验证max_songs参数
-        try:
-            max_songs = int(max_songs)
-            if max_songs <= 0:
-                max_songs = 20
-            elif max_songs > 50:  # 设置上限，避免导入过多歌曲
-                await msg.reply(f"为避免下载过多歌曲，最多支持导入50首歌曲，已自动调整为50首")
-                max_songs = 50
-        except ValueError:
-            max_songs = 20
+        # 处理播放模式参数
+        mode = None
+        if play_mode:
+            # 将中文模式名称转换为英文标识符
+            mode_mapping = {
+                "顺序播放": "sequential",
+                "sequential": "sequential",
+                "顺序": "sequential",
+                "随机播放": "random",
+                "random": "random",
+                "随机": "random",
+                "单曲循环": "single_loop",
+                "single": "single_loop",
+                "单曲": "single_loop",
+                "列表循环": "list_loop",
+                "loop": "list_loop",
+                "循环": "list_loop"
+            }
+            
+            # 转换模式名称
+            if play_mode.lower() in mode_mapping:
+                mode = mode_mapping[play_mode.lower()]
+            else:
+                # 如果是数字或其他值，可能是旧的最大歌曲数参数，忽略它
+                if not play_mode.isdigit() and play_mode.lower() != "all":
+                    await msg.reply(f"无效的播放模式: {play_mode}，将使用默认模式。\n可用模式：顺序播放、随机播放、单曲循环、列表循环")
+        
+        # 获取歌单详情（后台处理，不通知用户）
+        playlist_detail = await NeteaseAPI.get_playlist_detail(playlist_id)
+        if "error" in playlist_detail:
+            await msg.reply(f"获取歌单信息失败: {playlist_detail['error']}")
+            return
+            
+        # 获取歌单属性
+        playlist_name = "未知歌单"
+        playlist_creator = "未知用户"
+        total_tracks = 0
+        
+        if "playlist" in playlist_detail:
+            playlist = playlist_detail.get('playlist', {})
+            playlist_name = playlist.get('name', '未知歌单')
+            playlist_creator = playlist.get('creator', {}).get('nickname', '未知用户')
+            total_tracks = playlist.get('trackCount', 0)
+        
+        # 默认导入全部歌曲
+        max_songs_int = 0  # 0表示导入全部歌曲
 
         # 确定目标频道
         target_channel_id = None
@@ -1508,7 +1653,7 @@ async def import_playlist(msg: Message, playlist_url: str = "", max_songs: int =
             user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
             if not user_channels:
                 await msg.reply(
-                    '您当前不在任何语音频道中。请先加入一个语音频道，或提供频道ID作为参数，例如：`import 歌单URL 20 频道ID`')
+                    f'歌单「{playlist_name}」导入失败：您当前不在任何语音频道中。请先加入一个语音频道，或提供频道ID作为参数，例如：`import 歌单URL 随机 频道ID`')
                 return
             target_channel_id = user_channels[0].id
         else:
@@ -1529,8 +1674,6 @@ async def import_playlist(msg: Message, playlist_url: str = "", max_songs: int =
 
         # 如果机器人不在频道中，尝试加入频道
         if not is_in_channel:
-            await msg.reply(f"机器人尚未加入频道 {target_channel_id}，正在尝试加入...")
-
             join_data = await core.join_channel(target_channel_id)
             if 'error' in join_data:
                 await msg.reply(f"加入频道失败: {join_data['error']}")
@@ -1560,7 +1703,7 @@ async def import_playlist(msg: Message, playlist_url: str = "", max_songs: int =
             keep_alive_tasks[target_channel_id] = keep_alive_task
 
             logger.info(f"已加入频道 {target_channel_id} 并启动推流服务")
-            await msg.reply(f"已加入频道 {target_channel_id}")
+            await msg.reply(f"已加入频道 {target_channel_id}，准备导入歌单「{playlist_name}」")
 
         # 检查该频道是否有活跃的播放列表
         if target_channel_id not in playlist_tasks or playlist_tasks[target_channel_id] is None:
@@ -1570,15 +1713,22 @@ async def import_playlist(msg: Message, playlist_url: str = "", max_songs: int =
         # 获取推流器
         enhanced_streamer = playlist_tasks[target_channel_id]
 
-        # 显示导入进度消息
-        progress_msg = await msg.reply(f"正在从歌单 (ID: {playlist_id}) 导入歌曲，请稍候...")
-
         # 导入歌单
-        result = await enhanced_streamer.import_playlist(playlist_id, max_songs)
+        result = await enhanced_streamer.import_playlist(playlist_id, max_songs_int, target_channel_id)
 
         if "error" in result:
             await msg.reply(f"导入歌单失败: {result['error']}")
             return
+
+        # 如果设置了播放模式，应用它
+        if mode:
+            success = await enhanced_streamer.set_play_mode(mode)
+            if success:
+                # 获取当前播放模式的中文描述
+                mode_info = await enhanced_streamer.get_play_mode()
+                logger.info(f"已设置播放模式为: {mode_info[1] if mode_info else mode}")
+            else:
+                logger.error(f"设置播放模式失败: {mode}")
 
         # 构建成功消息
         playlist_name = result['name']
@@ -1596,6 +1746,12 @@ async def import_playlist(msg: Message, playlist_url: str = "", max_songs: int =
 
         if description:
             message_text += f"简介：{description}\n"
+
+        # 添加播放模式信息
+        if mode:
+            mode_info = await enhanced_streamer.get_play_mode()
+            if mode_info:
+                message_text += f"播放模式：{mode_info[1]}\n"
 
         message_text += "\n歌曲将按需下载并自动播放，可通过`list`命令查看当前播放列表"
 
