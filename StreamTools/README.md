@@ -116,4 +116,46 @@ python test_streamer.py /path/to/audio/files
 
 1. 确保RTP地址正确
 2. 检查是否安装了所有依赖
-3. 确保有合适的音频文件格式 
+3. 确保有合适的音频文件格式
+
+# 播放模式功能说明
+
+StreamTools 现在支持以下四种播放模式：
+
+1. **顺序播放(sequential)** - 默认模式，按照添加顺序播放歌曲，播放完毕后结束。
+2. **随机播放(random)** - 随机打乱播放列表中的歌曲顺序进行播放。
+3. **单曲循环(single_loop)** - 循环播放当前正在播放的歌曲。
+4. **列表循环(list_loop)** - 按顺序播放完列表后，从头开始再次播放。
+
+## 使用方法
+
+在 KOOK 频道中，使用以下命令管理播放模式：
+
+- `mode 模式名称 [频道ID]` - 设置播放模式，可选值：sequential/random/single/loop
+- `currentmode [频道ID]` - 查看当前播放模式
+
+示例：
+```
+mode random  # 设置为随机播放
+mode single  # 设置为单曲循环
+mode loop    # 设置为列表循环
+mode sequential  # 设置为顺序播放
+```
+
+## 技术实现
+
+播放模式相关的逻辑主要分布在以下几个部分：
+
+1. `PlaylistManager` 类中的 `get_next_song` 方法 - 根据不同的播放模式选择下一首歌曲
+2. `FFmpegPipeStreamer` 类中的 `_audio_loop` 方法 - 根据播放模式处理音频播放完成后的行为
+3. `EnhancedAudioStreamer` 类 - 提供对外的播放模式管理接口
+4. `index.py` 中的 `mode` 和 `currentmode` 命令 - 允许用户通过指令切换播放模式
+
+## 模式对比
+
+| 模式 | 顺序播放 | 随机播放 | 单曲循环 | 列表循环 |
+| --- | --- | --- | --- | --- |
+| 播放顺序 | 按添加顺序 | 随机顺序 | 重复当前曲目 | 按添加顺序 |
+| 播放完成后 | 结束播放 | 结束播放 | 重复当前曲目 | 从头开始 |
+| 列表为空时 | 退出频道 | 退出频道 | 保持播放 | 保持播放 |
+| 对应参数 | sequential | random | single_loop | list_loop | 

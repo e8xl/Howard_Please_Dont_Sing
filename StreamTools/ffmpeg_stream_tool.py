@@ -55,6 +55,10 @@ class PlaylistManager:
         self.current_song_notified = False
         # 添加用于跟踪刚添加的歌曲的集合
         self.recently_added_songs = set()
+        # 添加播放模式
+        self.play_mode = "sequential"  # 播放模式: sequential(顺序播放), random(随机播放), single_loop(单曲循环), list_loop(列表循环)
+        # 保存已播放过的歌曲，用于列表循环
+        self.played_songs = []
 
     def add_song(self, song_path, song_info=None):
         """
@@ -94,8 +98,35 @@ class PlaylistManager:
     def get_next_song(self):
         """获取下一首歌"""
         if not self.playlist:
-            return None
-        self.current_song = self.playlist.popleft()
+            # 处理列表循环模式
+            if self.play_mode == "list_loop" and self.played_songs:
+                # 将已播放列表重新加入播放队列
+                self.playlist.extend(self.played_songs)
+                self.played_songs = []
+
+            # 尝试获取下一首歌
+            if not self.playlist:
+                return None
+
+        # 如果是单曲循环模式，并且当前有歌曲正在播放，则重复播放当前歌曲
+        if self.play_mode == "single_loop" and self.current_song:
+            # 将当前歌曲标记为未通知，这样会重新显示当前歌曲信息
+            self.current_song_notified = False
+            return self.current_song
+
+        # 如果是随机播放模式，随机选择播放列表中的一首歌
+        if self.play_mode == "random" and self.playlist:
+            import random
+            random_index = random.randrange(len(self.playlist))
+            self.current_song = self.playlist[random_index]
+            del self.playlist[random_index]
+        else:
+            # 顺序播放模式或其他模式，从队列头部获取歌曲
+            self.current_song = self.playlist.popleft()
+
+        # 记录已播放歌曲用于列表循环
+        if self.play_mode == "list_loop":
+            self.played_songs.append(self.current_song)
 
         # 首先检查是否有预先存储的信息，否则使用ffprobe获取
         if self.current_song in self.songs_info:
@@ -122,7 +153,7 @@ class PlaylistManager:
         self.current_song_notified = False
 
         # 如果这是最后一首歌，清空recently_added_songs
-        if not self.playlist:
+        if not self.playlist and self.play_mode != "list_loop":
             self.recently_added_songs.clear()
 
         return self.current_song
@@ -215,6 +246,38 @@ class PlaylistManager:
     def has_songs(self):
         """检查是否还有歌曲"""
         return len(self.playlist) > 0 or self.current_song is not None
+
+    def set_play_mode(self, mode):
+        """
+        设置播放模式
+        
+        :param mode: 播放模式，可选值：sequential(顺序播放), random(随机播放), single_loop(单曲循环), list_loop(列表循环)
+        :return: 设置是否成功
+        """
+        valid_modes = ["sequential", "random", "single_loop", "list_loop"]
+        if mode not in valid_modes:
+            return False
+        
+        self.play_mode = mode
+        # 如果切换到列表循环模式，确保played_songs为空，避免历史播放记录影响
+        if mode == "list_loop":
+            self.played_songs = []
+        
+        return True
+    
+    def get_play_mode(self):
+        """
+        获取当前播放模式
+        
+        :return: 当前播放模式名称和中文描述
+        """
+        mode_names = {
+            "sequential": "顺序播放",
+            "random": "随机播放",
+            "single_loop": "单曲循环",
+            "list_loop": "列表循环"
+        }
+        return self.play_mode, mode_names.get(self.play_mode, "未知模式")
 
 
 class FFmpegPipeStreamer:
@@ -336,13 +399,15 @@ class FFmpegPipeStreamer:
                 if current_audio_path is None:
                     empty_playlist_timer += 1
                     if empty_playlist_timer >= 5:  # 连续5次检查播放列表为空
-                        print("播放列表为空，将退出音频循环")
-                        # 设置标志，指示由于播放列表为空而退出
-                        self.exit_due_to_empty_playlist = True
-                        # 标记音频循环已停止
-                        self._running = False
-                        print(f"已设置exit_due_to_empty_playlist为True（频道将自动退出），音频循环已标记为停止")
-                        break
+                        # 仅在非循环模式下退出，循环模式应该会一直有歌曲
+                        if self.playlist_manager.play_mode not in ["list_loop", "single_loop"]:
+                            print("播放列表为空，将退出音频循环")
+                            # 设置标志，指示由于播放列表为空而退出
+                            self.exit_due_to_empty_playlist = True
+                            # 标记音频循环已停止
+                            self._running = False
+                            print(f"已设置exit_due_to_empty_playlist为True（频道将自动退出），音频循环已标记为停止")
+                            break
                     await asyncio.sleep(1)  # 等待1秒再检查
                     continue
                 else:
@@ -426,33 +491,50 @@ class FFmpegPipeStreamer:
                         self.ffmpeg_process_player.terminate()
                         self.ffmpeg_process_player = None
 
-                    # 如果是自然播放完毕（没有被跳过），设置当前歌曲为None
+                    # 如果是自然播放完毕（没有被跳过），根据播放模式处理
                     if self.playlist_manager.current_song == current_audio_path:
+                        if self.playlist_manager.play_mode == "single_loop":
+                            # 单曲循环模式，不需要重置current_song
+                            print(f"单曲循环模式：重新播放 {os.path.basename(current_audio_path)}")
+                            self.playlist_manager.current_song_notified = False
+                            continue
+                        elif self.playlist_manager.play_mode == "list_loop" and not self.playlist_manager.playlist:
+                            # 列表循环模式，如果播放列表为空，且是最后一首歌，通知将重新开始播放列表
+                            if self.message_callback and self.message_obj:
+                                try:
+                                    await self.message_callback(self.message_obj, "列表播放完毕，将重新开始播放")
+                                except Exception as e:
+                                    print(f"发送列表循环通知时出错: {e}")
+                        
+                        # 正常处理下一首歌
                         self.playlist_manager.current_song = None
                         self.playlist_manager.current_song_notified = False
                         
-                        # 检查是否有下一首歌，如果有，通知用户
+                        # 获取下一首歌，即将播放的信息
                         if self.playlist_manager.playlist and self.message_callback and self.message_obj:
                             # 获取下一首歌的信息
-                            next_song_path = self.playlist_manager.playlist[0]
-                            next_song_info = None
+                            next_song_path = None
                             next_song_title = "未知歌曲"
                             
-                            if next_song_path in self.playlist_manager.songs_info:
-                                next_song_info = self.playlist_manager.songs_info[next_song_path]
-                                song_name = next_song_info.get('song_name', os.path.basename(next_song_path))
-                                artist_name = next_song_info.get('artist_name', "未知艺术家")
-                                next_song_title = f"{song_name} - {artist_name}"
-                            else:
-                                # 尝试使用ffprobe获取信息
-                                info = self.playlist_manager.get_song_info(next_song_path)
-                                next_song_title = info['title']
+                            # 对于随机播放，无法确定下一首是哪一首
+                            if self.playlist_manager.play_mode != "random":
+                                next_song_path = self.playlist_manager.playlist[0]
+                                
+                                if next_song_path in self.playlist_manager.songs_info:
+                                    next_song_info = self.playlist_manager.songs_info[next_song_path]
+                                    song_name = next_song_info.get('song_name', os.path.basename(next_song_path))
+                                    artist_name = next_song_info.get('artist_name', "未知艺术家")
+                                    next_song_title = f"{song_name} - {artist_name}"
+                                else:
+                                    # 尝试使用ffprobe获取信息
+                                    info = self.playlist_manager.get_song_info(next_song_path)
+                                    next_song_title = info['title']
                             
-                            try:
-                                # 通知用户下一首歌曲
-                                await self.message_callback(self.message_obj, f"即将播放: {next_song_title}")
-                            except Exception as e:
-                                print(f"发送下一首歌曲通知时出错: {e}")
+                                try:
+                                    # 通知用户下一首歌曲
+                                    await self.message_callback(self.message_obj, f"即将播放: {next_song_title}")
+                                except Exception as e:
+                                    print(f"发送下一首歌曲通知时出错: {e}")
 
                 except Exception as e:
                     print(f"音频流处理错误: {e}")

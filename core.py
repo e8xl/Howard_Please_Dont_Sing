@@ -141,7 +141,7 @@ async def leave_channel(channel_id):
     temp_client = KookVoiceClient(token)
     try:
         leave_data = await temp_client.leave_channel(channel_id)
-        
+
         # 关闭持久客户端连接（如果存在）
         if channel_id in clients:
             client = clients.pop(channel_id, None)
@@ -151,7 +151,7 @@ async def leave_channel(channel_id):
                     print(f"已关闭频道 {channel_id} 的持久客户端")
                 except Exception as e:
                     print(f"关闭持久客户端时发生错误: {e}")
-        
+
         return {"success": leave_data}
     except VoiceClientError as e:
         return {"error": str(e)}
@@ -563,16 +563,16 @@ class EnhancedAudioStreamer:
             # 确保有日志记录器
             import logging
             logger = logging.getLogger(__name__)
-            
+
             # 如果streamer已经初始化，更新它的音量
             if self.streamer:
                 success = await self.streamer.update_volume(new_volume)
                 if not success:
                     return False
-                
+
             # 更新自身存储的音量
             self.volume = new_volume
-            
+
             # 更新配置文件
             config = open_file('./config/config.json')
             if config:
@@ -584,8 +584,52 @@ class EnhancedAudioStreamer:
                 except Exception as e:
                     logger.error(f"保存音量设置到配置文件时出错: {e}")
                     return False
-            
+
             return True
         except Exception as e:
             logger.error(f"更新音量时出错: {e}")
             return False
+
+    async def set_play_mode(self, mode):
+        """
+        设置播放模式
+        
+        :param mode: 播放模式，可选值：sequential(顺序播放), random(随机播放), single_loop(单曲循环), list_loop(列表循环)
+        :return: 是否成功更新
+        """
+        try:
+            # 确保有日志记录器
+            import logging
+            logger = logging.getLogger(__name__)
+
+            # 如果streamer已经初始化，更新它的播放模式
+            if not self.streamer or not self.playlist_manager:
+                logger.error("推流服务未启动，无法设置播放模式")
+                return False
+
+            success = self.playlist_manager.set_play_mode(mode)
+            if success:
+                logger.info(f"播放模式已更新为: {mode}")
+                return True
+            else:
+                logger.error(f"无效的播放模式: {mode}")
+                return False
+
+        except Exception as e:
+            logger.error(f"设置播放模式时出错: {e}")
+            return False
+
+    async def get_play_mode(self):
+        """
+        获取当前播放模式
+        
+        :return: 当前播放模式名称和中文描述，若推流服务未启动则返回None
+        """
+        try:
+            if not self.streamer or not self.playlist_manager:
+                return None
+
+            return self.playlist_manager.get_play_mode()
+        except Exception as e:
+            print(f"获取播放模式时出错: {e}")
+            return None

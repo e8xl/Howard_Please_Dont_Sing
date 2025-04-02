@@ -98,7 +98,8 @@ async def monitor_streamer_status(msg, channel_id):
                 break
 
             # 检查推流器是否因为播放列表为空而退出
-            if hasattr(enhanced_streamer.streamer, 'exit_due_to_empty_playlist') and enhanced_streamer.streamer.exit_due_to_empty_playlist:
+            if hasattr(enhanced_streamer.streamer,
+                       'exit_due_to_empty_playlist') and enhanced_streamer.streamer.exit_due_to_empty_playlist:
                 # 推流器已设置自动退出标志
                 logger.info(f"检测到频道 {channel_id} 的推流器设置了空列表退出标志，准备退出频道")
 
@@ -111,14 +112,14 @@ async def monitor_streamer_status(msg, channel_id):
                 # 等待10秒给用户添加歌曲的机会，但分成多次短等待，每次检查播放列表
                 empty_playlist = True
                 for i in range(5):  # 分5次等待，每次2秒
-                    logger.info(f"等待用户添加歌曲：第{i+1}次检查，剩余{10-i*2}秒")
+                    logger.info(f"等待用户添加歌曲：第{i + 1}次检查，剩余{10 - i * 2}秒")
                     await asyncio.sleep(2)
 
                     # 重新检查播放列表状态
                     if channel_id in playlist_tasks:
                         enhanced_streamer = playlist_tasks[channel_id]
                         songs_list = await enhanced_streamer.list_songs()
-                        
+
                         # 如果用户已添加新歌
                         if songs_list:
                             # 重置退出标志
@@ -319,7 +320,10 @@ async def menu(msg: Message):
     text += "「列表」「歌单」查看当前播放列表\n"
     text += "「跳过」「下一首」跳过当前正在播放的歌曲\n"
     text += "「搜索 歌名-歌手(可选)」搜索音乐\n"
-    text += "「下载 歌名-歌手(可选)」下载音乐（不要滥用球球了）"
+    text += "「下载 歌名-歌手(可选)」下载音乐（不要滥用球球了）\n"
+    text += "「模式」「播放模式」更改播放模式，包括：顺序播放、随机播放、单曲循环、列表循环\n"
+    text += "「当前模式」「查看模式」查看当前播放模式\n"
+    text += "「音量 [0.1-2.0]」调整音量大小"
     c3.append(Module.Section(Element.Text(text, Types.Text.KMD)))
     c3.append(Module.Divider())  # 分割线
     c3.append(Module.Header('和我玩小游戏吧~ '))
@@ -721,7 +725,8 @@ async def neteasemusic_stream(msg: Message, *args):
         is_first_song = await enhanced_streamer.add_song(audio_path, songs)
 
         # 如果推流器停止了但仍在字典中，确保它重新开始
-        if hasattr(enhanced_streamer, 'streamer') and enhanced_streamer.streamer and not enhanced_streamer.streamer._running:
+        if hasattr(enhanced_streamer,
+                   'streamer') and enhanced_streamer.streamer and not enhanced_streamer.streamer._running:
             logger.info(f"检测到推流器已停止但仍在字典中，尝试重新启动推流器")
             try:
                 # 尝试重新启动音频循环
@@ -789,7 +794,7 @@ async def neteasemusic_stream(msg: Message, *args):
 async def list_playlist(msg: Message, channel_id: str = ""):
     try:
         target_channel_id = None
-        
+
         # 如果没有提供channel_id参数，则获取用户所在的语音频道
         if not channel_id:
             user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
@@ -812,7 +817,7 @@ async def list_playlist(msg: Message, channel_id: str = ""):
         if error:
             await msg.reply(f"检查频道状态时发生错误: {error}")
             return
-            
+
         if not is_in_channel:
             await msg.reply(f"机器人当前不在频道 {target_channel_id} 中")
             return
@@ -846,7 +851,7 @@ async def list_playlist(msg: Message, channel_id: str = ""):
 async def skip_song(msg: Message, channel_id: str = ""):
     try:
         target_channel_id = None
-        
+
         # 如果没有提供channel_id参数，则获取用户所在的语音频道
         if not channel_id:
             user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
@@ -869,7 +874,7 @@ async def skip_song(msg: Message, channel_id: str = ""):
         if error:
             await msg.reply(f"检查频道状态时发生错误: {error}")
             return
-            
+
         if not is_in_channel:
             await msg.reply(f"机器人当前不在频道 {target_channel_id} 中")
             return
@@ -1099,7 +1104,8 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
         is_first_song = await enhanced_streamer.add_song(audio_path, songs)
 
         # 如果推流器停止了但仍在字典中，确保它重新开始
-        if hasattr(enhanced_streamer, 'streamer') and enhanced_streamer.streamer and not enhanced_streamer.streamer._running:
+        if hasattr(enhanced_streamer,
+                   'streamer') and enhanced_streamer.streamer and not enhanced_streamer.streamer._running:
             logger.info(f"检测到推流器已停止但仍在字典中，尝试重新启动推流器")
             try:
                 # 尝试重新启动音频循环
@@ -1137,7 +1143,7 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
                     message_text += f"\n- {song}"
 
         await msg.reply(message_text)
-        
+
         # 确保监控任务存在且正常运行
         if target_channel_id not in auto_exit_tasks or auto_exit_tasks[target_channel_id].done():
             logger.info(f"重新创建频道 {target_channel_id} 的监控任务")
@@ -1173,7 +1179,7 @@ async def s1_command(msg: Message, *args):
         if search_results == "未找到相关音乐":
             await msg.reply("未找到相关音乐")
             return
-        
+
         # 只返回格式化的列表部分
         formatted_results = search_results["formatted_list"]
         # 分割获取第一首歌
@@ -1298,6 +1304,164 @@ async def set_volume(msg: Message, volume_str: str = None):
     except ValueError:
         await msg.reply(f"无效的音量值：{volume_str}，请输入有效的数字")
         return
+
+
+# region 播放模式切换
+@bot.command(name="mode", aliases=["播放模式", "模式"])
+async def set_play_mode(msg: Message, mode: str = None, channel_id: str = ""):
+    """
+    设置播放模式
+
+    :param msg: 消息对象
+    :param mode: 播放模式，可选值：顺序播放(sequential), 随机播放(random), 单曲循环(single), 列表循环(loop)
+    :param channel_id: 频道ID，可选
+    """
+    try:
+        # 如果没有提供mode参数，显示当前模式
+        if not mode:
+            await msg.reply(
+                "请指定播放模式：\n- 顺序播放(sequential)\n- 随机播放(random)\n- 单曲循环(single)\n- 列表循环(loop)")
+            return
+
+        # 将中文模式名称转换为英文标识符
+        mode_mapping = {
+            "顺序播放": "sequential",
+            "sequential": "sequential",
+            "顺序": "sequential",
+            "随机播放": "random",
+            "random": "random",
+            "随机": "random",
+            "单曲循环": "single_loop",
+            "single": "single_loop",
+            "单曲": "single_loop",
+            "列表循环": "list_loop",
+            "loop": "list_loop",
+            "循环": "list_loop"
+        }
+
+        # 转换模式名称
+        if mode.lower() in mode_mapping:
+            mode = mode_mapping[mode.lower()]
+        else:
+            await msg.reply(
+                "无效的播放模式，可用模式：\n- 顺序播放(sequential)\n- 随机播放(random)\n- 单曲循环(single)\n- 列表循环(loop)")
+            return
+
+        # 确定目标频道
+        target_channel_id = None
+
+        # 如果没有提供channel_id参数，则获取用户所在的语音频道
+        if not channel_id:
+            user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
+            if not user_channels:
+                await msg.reply(
+                    '您当前不在任何语音频道中。请先加入一个语音频道，或提供频道ID作为参数，例如：`mode random 频道ID`')
+                return
+            target_channel_id = user_channels[0].id
+        else:
+            # 使用提供的频道ID
+            target_channel_id = channel_id.strip()
+
+        # 获取当前活跃频道列表
+        alive_data = await core.get_alive_channel_list()
+        if 'error' in alive_data:
+            await msg.reply(f"获取频道列表时发生错误: {alive_data['error']}")
+            return
+
+        # 检测机器人是否已在目标频道
+        is_in_channel, error = core.is_bot_in_channel(alive_data, target_channel_id)
+        if error:
+            await msg.reply(f"检查频道状态时发生错误: {error}")
+            return
+
+        if not is_in_channel:
+            await msg.reply(f"机器人当前不在频道 {target_channel_id} 中")
+            return
+
+        # 检查该频道是否有活跃的播放列表
+        if target_channel_id not in playlist_tasks or playlist_tasks[target_channel_id] is None:
+            await msg.reply('该频道没有活跃的播放列表')
+            return
+
+        # 设置播放模式
+        enhanced_streamer = playlist_tasks[target_channel_id]
+        success = await enhanced_streamer.set_play_mode(mode)
+
+        if success:
+            # 获取当前播放模式的中文描述
+            mode_info = await enhanced_streamer.get_play_mode()
+            if mode_info:
+                mode_name, mode_desc = mode_info
+                await msg.reply(f"频道 {target_channel_id} 的播放模式已设置为: {mode_desc}")
+            else:
+                await msg.reply(f"频道 {target_channel_id} 的播放模式已设置为: {mode}")
+        else:
+            await msg.reply(f"设置播放模式失败")
+
+    except Exception as e:
+        await msg.reply(f"设置播放模式时发生错误: {e}")
+
+
+@bot.command(name="currentmode", aliases=["当前模式", "查看模式"])
+async def get_current_mode(msg: Message, channel_id: str = ""):
+    """
+    获取当前播放模式
+
+    :param msg: 消息对象
+    :param channel_id: 频道ID，可选
+    """
+    try:
+        # 确定目标频道
+        target_channel_id = None
+
+        # 如果没有提供channel_id参数，则获取用户所在的语音频道
+        if not channel_id:
+            user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
+            if not user_channels:
+                await msg.reply(
+                    '您当前不在任何语音频道中。请先加入一个语音频道，或提供频道ID作为参数，例如：`currentmode 频道ID`')
+                return
+            target_channel_id = user_channels[0].id
+        else:
+            # 使用提供的频道ID
+            target_channel_id = channel_id.strip()
+
+        # 获取当前活跃频道列表
+        alive_data = await core.get_alive_channel_list()
+        if 'error' in alive_data:
+            await msg.reply(f"获取频道列表时发生错误: {alive_data['error']}")
+            return
+
+        # 检测机器人是否已在目标频道
+        is_in_channel, error = core.is_bot_in_channel(alive_data, target_channel_id)
+        if error:
+            await msg.reply(f"检查频道状态时发生错误: {error}")
+            return
+
+        if not is_in_channel:
+            await msg.reply(f"机器人当前不在频道 {target_channel_id} 中")
+            return
+
+        # 检查该频道是否有活跃的播放列表
+        if target_channel_id not in playlist_tasks or playlist_tasks[target_channel_id] is None:
+            await msg.reply('该频道没有活跃的播放列表')
+            return
+
+        # 获取当前播放模式
+        enhanced_streamer = playlist_tasks[target_channel_id]
+        mode_info = await enhanced_streamer.get_play_mode()
+
+        if mode_info:
+            mode_name, mode_desc = mode_info
+            await msg.reply(f"频道 {target_channel_id} 的当前播放模式为: {mode_desc}")
+        else:
+            await msg.reply(f"无法获取频道 {target_channel_id} 的播放模式")
+
+    except Exception as e:
+        await msg.reply(f"获取播放模式时发生错误: {e}")
+
+
+# endrigon
 
 
 # region 机器人运行主程序
