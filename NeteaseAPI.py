@@ -811,4 +811,52 @@ def parse_playlist_url(url: str) -> str:
         return match.group(1)
     
     return ""
+
+# 解析网易云音乐各种URL类型
+def parse_music_url(url: str):
+    """
+    解析网易云音乐各种URL类型，识别并提取不同类型URL的ID
+    
+    Args:
+        url: 网易云音乐URL或ID
+        
+    Returns:
+        包含类型和ID的字典，如：
+        {
+            "type": "song", // 可能的值: "song", "album", "djradio", "dj", "playlist", "id", "unknown"
+            "id": "12345678" // ID字符串
+        }
+    """
+    import re
+    
+    # 检查是否是纯数字ID（长度大于等于6位的数字）
+    if url.isdigit() and len(url) >= 6:
+        return {
+            "type": "id",
+            "id": url
+        }
+    
+    # 定义各种URL模式的正则表达式
+    patterns = {
+        "song": r'music\.163\.com/(?:[^/]*(?:/)?)?song\?(?:[^&]*&)*id=(\d+)',
+        "album": r'music\.163\.com/(?:[^/]*(?:/)?)?album\?(?:[^&]*&)*id=(\d+)',
+        "djradio": r'music\.163\.com/(?:[^/]*(?:/)?)?djradio\?(?:[^&]*&)*id=(\d+)',
+        "dj": r'music\.163\.com/(?:[^/]*(?:/)?)?dj\?(?:[^&]*&)*id=(\d+)',
+        "playlist": r'music\.163\.com/(?:[^/]*(?:/)?)?playlist\?(?:[^&]*&)*id=(\d+)'
+    }
+    
+    # 依次检查每种模式
+    for url_type, pattern in patterns.items():
+        match = re.search(pattern, url)
+        if match:
+            return {
+                "type": url_type,
+                "id": match.group(1)
+            }
+    
+    # 如果没有匹配任何模式，返回未知类型
+    return {
+        "type": "unknown",
+        "id": ""
+    }
 # endregion

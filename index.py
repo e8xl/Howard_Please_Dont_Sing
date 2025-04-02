@@ -1405,33 +1405,23 @@ async def play_channel(msg: Message, song_name: str = "", channel_id: str = ""):
                     task = asyncio.create_task(monitor_streamer_status(msg, target_channel_id))
                     auto_exit_tasks[target_channel_id] = task
 
-        # 检查song_name是否是各种网易云音乐链接或ID
-        import re
+        # 使用统一的URL解析函数检查是否是网易云音乐链接
+        parsed_url = NeteaseAPI.parse_music_url(song_name)
+        url_type = parsed_url["type"]
+        url_id = parsed_url["id"]
 
-        # 检查是否是网易云音乐歌曲链接
-        song_id_match = re.search(r'music\.163\.com/song\?id=(\d+)', song_name)
-
-        # 检查是否是网易云电台节目链接
-        dj_id_match = re.search(r'music\.163\.com/dj\?id=(\d+)', song_name)
-
-        # 如果第一个参数是纯数字且长度不小于6位，也视为直接ID
-        is_direct_id = song_name.isdigit() and len(song_name) >= 6
-
-        if dj_id_match:
+        if url_type == "dj":
             # 处理电台节目
-            dj_id = dj_id_match.group(1)
-            await msg.reply(f"检测到网易云电台节目链接，正在获取电台ID: {dj_id}")
-            songs = await NeteaseAPI.download_radio_program(dj_id)
-        elif song_id_match or is_direct_id:
+            await msg.reply(f"检测到网易云电台节目链接，正在获取电台ID: {url_id}")
+            songs = await NeteaseAPI.download_radio_program(url_id)
+        elif url_type == "song" or url_type == "id":
             # 直接使用ID获取歌曲
-            if song_id_match:
-                music_id = song_id_match.group(1)
-                await msg.reply(f"检测到网易云音乐链接，正在获取歌曲ID: {music_id}")
-            else:
-                music_id = song_name
-                await msg.reply(f"检测到直接使用歌曲ID: {music_id}")
-
-            songs = await NeteaseAPI.download_music_by_id(music_id)
+            await msg.reply(f"检测到网易云音乐{url_type}，正在获取歌曲ID: {url_id}")
+            songs = await NeteaseAPI.download_music_by_id(url_id)
+        elif url_type in ["album", "djradio", "playlist"]:
+            # 不支持的URL类型
+            await msg.reply(f"PC命令不支持{url_type}类型的链接，请使用单曲或电台节目链接")
+            return
         else:
             # 进行歌曲搜索
             await msg.reply(f"正在搜索歌曲: {song_name}")
@@ -2042,8 +2032,18 @@ async def import_playlist(msg: Message, playlist_url: str = "", play_mode: str =
                 "请提供歌单URL，例如：`import https://music.163.com/playlist?id=13621716`\n可选参数：播放模式 [顺序/随机/单曲/循环]，例如：`import 歌单URL 随机`")
             return
 
+        # 使用统一的URL解析函数检查是否是网易云音乐链接
+        parsed_url = NeteaseAPI.parse_music_url(playlist_url)
+        url_type = parsed_url["type"]
+        url_id = parsed_url["id"]
+
+        # 只允许playlist类型的链接
+        if url_type != "playlist":
+            await msg.reply(f"导入歌单命令只支持歌单类型的链接，当前链接类型为: {url_type}")
+            return
+
         # 提取歌单ID
-        playlist_id = NeteaseAPI.parse_playlist_url(playlist_url)
+        playlist_id = url_id
         if not playlist_id:
             await msg.reply("无效的歌单URL，请提供正确的网易云音乐歌单链接")
             return
