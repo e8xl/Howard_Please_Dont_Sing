@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import time
+import psutil
 from datetime import datetime, timedelta
 
 # 监测文件夹大小的阈值（字节）
@@ -24,6 +25,15 @@ logger = logging.getLogger(__name__)
 # 按钮点击的锁，防止连续点击
 BUTTON_LOCKS = {}  # 格式: {'频道ID_操作类型': 时间戳}
 BUTTON_COOLDOWN = 5  # 按钮冷却时间（秒）
+
+# 性能监控任务
+performance_monitor_task = None
+# 性能数据历史记录 - 使用简单的元组列表，避免类型问题
+performance_memory = []  # 内存使用列表 (MB)
+performance_cpu = []     # CPU使用率列表 (%)
+performance_timestamps = []  # 时间戳列表
+# 设置性能监控间隔（秒）
+PERFORMANCE_MONITOR_INTERVAL = 60  # 每分钟记录一次
 
 
 # 按钮点击事件处理
@@ -468,6 +478,92 @@ def get_progress_bar(current, total, bar_length=20):
     return f"{progress_bar} {percent}%"
 
 
+# 性能监控函数
+async def monitor_performance():
+    """
+    监控系统性能，包括内存使用和CPU使用率
+    定期记录性能数据并检测潜在的内存泄漏
+    """
+    process = psutil.Process()
+    logger.info(f"开始性能监控，进程ID: {process.pid}")
+    
+    # 记录初始内存使用
+    try:
+        initial_memory_usage = float(process.memory_info().rss) / (1024 * 1024)  # 转换为MB
+        logger.info(f"初始内存使用: {initial_memory_usage:.2f} MB")
+    except Exception as e:
+        logger.error(f"获取初始内存使用时发生错误: {e}")
+        initial_memory_usage = 0.0
+    
+    try:
+        while True:
+            try:
+                # 获取当前内存使用情况
+                memory_usage = float(process.memory_info().rss) / (1024 * 1024)  # 转换为MB
+                
+                # 获取CPU使用率
+                cpu_percent = float(process.cpu_percent(interval=1))
+                
+                # 获取当前时间戳
+                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                # 存储性能数据
+                performance_memory.append(memory_usage)
+                performance_cpu.append(cpu_percent)
+                performance_timestamps.append(current_time)
+                
+                # 只保留最近50条记录
+                if len(performance_memory) > 50:
+                    performance_memory.pop(0)
+                    performance_cpu.pop(0)
+                    performance_timestamps.pop(0)
+                
+                # 记录详细的性能信息到日志
+                logger.info(f"性能监控 - 内存使用: {memory_usage:.2f} MB, CPU使用率: {cpu_percent:.1f}%, 时间: {current_time}")
+            
+            except Exception as loop_error:
+                logger.error(f"性能监控循环中发生错误: {loop_error}")
+            
+            # 等待下一个监控周期
+            await asyncio.sleep(PERFORMANCE_MONITOR_INTERVAL)
+    except asyncio.CancelledError:
+        logger.info("性能监控任务已取消")
+    except Exception as e:
+        logger.error(f"性能监控发生错误: {e}")
+
+
+# 清理性能监控任务
+async def cleanup_performance_monitor():
+    """
+    清理性能监控任务，防止程序退出时的资源泄漏
+    """
+    global performance_monitor_task
+    if performance_monitor_task and not performance_monitor_task.done():
+        logger.info("正在取消性能监控任务...")
+        performance_monitor_task.cancel()
+        try:
+            await performance_monitor_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("性能监控任务已取消")
+
+
+# 机器人关闭时的处理
+@bot.on_shutdown
+async def bot_shutdown(_):
+    try:
+        logger.info("机器人正在关闭，清理资源...")
+        
+        # 清理性能监控任务
+        await cleanup_performance_monitor()
+        
+        # 这里可以添加其他清理代码，如关闭频道连接等
+        
+        logger.info("机器人资源清理完成")
+    except Exception as e:
+        logger.error(f"机器人关闭时清理资源发生错误: {e}")
+
+
 start_time = get_time()
 
 
@@ -477,6 +573,11 @@ async def set_bot_game_status(_):
     try:
         # 启动时检查 AudioLib 文件夹大小
         check_audio_lib_size()
+
+        # 启动性能监控
+        global performance_monitor_task
+        performance_monitor_task = asyncio.create_task(monitor_performance())
+        logger.info("已启动性能监控任务")
 
         await bot.client.update_playing_game(2128858)
         print("已成功设置机器人游戏状态")
@@ -751,6 +852,10 @@ async def menu(msg: Message):
     text = "「r 1 100」掷骰子1-100，范围可自主调节。可在末尾添加第三个参数实现同时掷多个骰子\n"
     text += "「cd 秒数」倒计时，默认60秒\n"
     text += "「we 城市」查询城市未来3天的天气情况\n"
+    c3.append(Module.Section(Element.Text(text, Types.Text.KMD)))
+    c3.append(Module.Divider())  # 分割线
+    c3.append(Module.Header('机器人管理功能'))
+    text = "「性能」「监控」查看机器人当前的内存和CPU使用情况\n"
     c3.append(Module.Section(Element.Text(text, Types.Text.KMD)))
     c3.append(Module.Divider())
     c3.append(
@@ -1782,6 +1887,77 @@ async def set_volume(msg: Message, volume_str: str = None):
     except ValueError:
         await msg.reply(f"无效的音量值：{volume_str}，请输入有效的数字")
         return
+
+
+# 性能监控命令
+@bot.command(name="performance", aliases=["性能", "监控"])
+async def show_performance(msg: Message):
+    """
+    显示当前系统性能状态
+    包括内存使用、CPU使用率和变化趋势
+    """
+    try:
+        if not performance_memory or len(performance_memory) < 2:
+            await msg.reply("性能监控尚未收集足够的数据，请等待1-2分钟后再试")
+            return
+        
+        # 获取当前性能数据（最近一次记录）
+        current_memory = performance_memory[-1]
+        current_cpu = performance_cpu[-1]
+        
+        # 运行时间
+        uptime = format_time(time.time() - start_time)
+        
+        # 创建性能卡片
+        c = Card(color=(0, 122, 204))  # 使用蓝色
+        c.append(Module.Header('系统性能监控'))
+        
+        # 基本信息部分
+        c.append(Module.Section(Element.Text(f"**运行时间:** {uptime}", Types.Text.KMD)))
+        c.append(Module.Section(Element.Text(f"**当前内存使用:** {current_memory:.2f} MB", Types.Text.KMD)))
+        c.append(Module.Section(Element.Text(f"**当前CPU使用率:** {current_cpu:.1f}%", Types.Text.KMD)))
+        
+        # 计算内存变化率（百分比）
+        memory_change_text = "稳定"
+        try:
+            # 计算最近两次记录之间的变化
+            prev_memory = performance_memory[-2]
+            memory_change = ((current_memory - prev_memory) / prev_memory) * 100
+            
+            if memory_change > 5:
+                memory_change_text = f"**警告：增长 {memory_change:.1f}%**"
+            elif memory_change > 1:
+                memory_change_text = f"轻微增长 {memory_change:.1f}%"
+            elif memory_change < -5:
+                memory_change_text = f"明显下降 {abs(memory_change):.1f}%"
+            elif memory_change < -1:
+                memory_change_text = f"轻微下降 {abs(memory_change):.1f}%"
+        except Exception as e:
+            logger.error(f"计算内存变化率时出错: {e}")
+            memory_change_text = "计算出错"
+        
+        c.append(Module.Section(Element.Text(f"**内存变化趋势:** {memory_change_text}", Types.Text.KMD)))
+        
+        # 最近内存使用记录
+        if len(performance_memory) >= 5:
+            # 只显示最近5个点
+            recent_memory = performance_memory[-5:]
+            memory_text = "**最近内存使用记录 (MB):**\n"
+            
+            for i, mem in enumerate(recent_memory):
+                memory_text += f"{mem:.1f}"
+                if i < len(recent_memory) - 1:
+                    memory_text += " → "
+                    
+            c.append(Module.Section(Element.Text(memory_text, Types.Text.KMD)))
+        
+        # 发送卡片消息
+        cm = CardMessage(c)
+        await msg.reply(cm)
+    except Exception as e:
+        logger.error(f"显示性能信息时发生错误: {e}")
+        # 使用简单文本回复，避免格式问题
+        await msg.reply(f"显示性能信息时出错，请检查日志: {e}")
 
 
 # region 播放模式切换
