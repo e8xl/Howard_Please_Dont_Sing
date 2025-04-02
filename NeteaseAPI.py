@@ -571,3 +571,87 @@ async def download_radio_program(program_id: str):
 
 
 # endregion
+
+# region 网易云歌单相关功能
+async def get_playlist_detail(playlist_id: str):
+    """
+    获取歌单详情信息
+    
+    Args:
+        playlist_id: 歌单ID
+        
+    Returns:
+        歌单详情信息
+    """
+    try:
+        # 确保已登录
+        await ensure_logged_in()
+        
+        # 加载Cookie
+        cookies = await load_cookies()
+        if not cookies:
+            return {"error": "未登录，请通知开发者完成登录操作"}
+        
+        async with aiohttp.ClientSession(cookies=cookies) as session:
+            async with session.get(f"http://localhost:3000/playlist/detail?id={playlist_id}") as resp:
+                data = await resp.json()
+                if data['code'] != 200:
+                    raise Exception("获取歌单详情失败")
+                
+                return data
+    except Exception as e:
+        return {"error": str(e)}
+
+async def get_playlist_tracks(playlist_id: str, limit: int = 20, offset: int = 0):
+    """
+    获取歌单中的歌曲列表
+    
+    Args:
+        playlist_id: 歌单ID
+        limit: 每次获取的歌曲数量，默认20首
+        offset: 偏移量，默认0
+        
+    Returns:
+        歌单中的歌曲列表
+    """
+    try:
+        # 确保已登录
+        await ensure_logged_in()
+        
+        # 加载Cookie
+        cookies = await load_cookies()
+        if not cookies:
+            return {"error": "未登录，请通知开发者完成登录操作"}
+        
+        async with aiohttp.ClientSession(cookies=cookies) as session:
+            async with session.get(f"http://localhost:3000/playlist/track/all?id={playlist_id}&limit={limit}&offset={offset}") as resp:
+                data = await resp.json()
+                if data['code'] != 200:
+                    raise Exception("获取歌单歌曲列表失败")
+                
+                return data
+    except Exception as e:
+        return {"error": str(e)}
+
+# 解析网易云音乐歌单URL
+def parse_playlist_url(url: str) -> str:
+    """
+    解析网易云音乐歌单URL，提取歌单ID
+    
+    Args:
+        url: 歌单URL
+        
+    Returns:
+        歌单ID或空字符串（如果不是有效的歌单URL）
+    """
+    import re
+    
+    # 使用search而不是match，并且只匹配id参数部分
+    pattern = r'music\.163\.com/(?:[^/]*(?:/)?)?playlist\?(?:[^&]*&)*id=(\d+)'
+    
+    match = re.search(pattern, url)
+    if match:
+        return match.group(1)
+    
+    return ""
+# endregion

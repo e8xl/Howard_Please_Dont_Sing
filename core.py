@@ -628,8 +628,115 @@ class EnhancedAudioStreamer:
         try:
             if not self.streamer or not self.playlist_manager:
                 return None
-
+                
             return self.playlist_manager.get_play_mode()
         except Exception as e:
             print(f"获取播放模式时出错: {e}")
             return None
+            
+    async def import_playlist(self, playlist_id, max_songs=20):
+        """
+        导入网易云音乐歌单
+        
+        :param playlist_id: 歌单ID
+        :param max_songs: 最大导入歌曲数量，默认20首
+        :return: 包含导入信息的字典
+        """
+        try:
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            if not self.streamer or not self.playlist_manager:
+                logger.error("推流服务未启动，无法导入歌单")
+                return {"error": "推流服务未启动，无法导入歌单"}
+                
+            # 导入NeteaseAPI
+            import importlib
+            NeteaseAPI = importlib.import_module("NeteaseAPI")
+            
+            # 获取歌单详情
+            logger.info(f"正在获取歌单ID: {playlist_id} 的详情")
+            playlist_detail = await NeteaseAPI.get_playlist_detail(playlist_id)
+            
+            if "error" in playlist_detail:
+                logger.error(f"获取歌单详情失败: {playlist_detail['error']}")
+                return {"error": f"获取歌单详情失败: {playlist_detail['error']}"}
+                
+            # 保存歌单信息
+            self.playlist_manager.set_playlist_info(playlist_detail)
+            
+            # 提取歌单基本信息
+            playlist_info = self.playlist_manager.get_playlist_info()
+            if not playlist_info:
+                logger.error("解析歌单信息失败")
+                return {"error": "解析歌单信息失败"}
+                
+            # 获取歌单中的歌曲列表
+            total_tracks = playlist_info['trackCount']
+            to_import = min(max_songs, total_tracks)
+            
+            logger.info(f"歌单 '{playlist_info['name']}' 共有 {total_tracks} 首歌曲，将导入前 {to_import} 首")
+            
+            # 获取歌曲详情
+            tracks_data = await NeteaseAPI.get_playlist_tracks(playlist_id, limit=to_import)
+            
+            if "error" in tracks_data:
+                logger.error(f"获取歌单歌曲列表失败: {tracks_data['error']}")
+                return {"error": f"获取歌单歌曲列表失败: {tracks_data['error']}"}
+                
+            # 提取歌曲信息
+            tracks = tracks_data.get('songs', [])
+            
+            # 保存歌曲列表
+            self.playlist_manager.set_playlist_tracks(tracks)
+            
+            # 将歌曲添加到下载队列
+            added_count = self.playlist_manager.add_playlist_batch(tracks)
+            
+            logger.info(f"已将 {added_count} 首歌曲添加到下载队列")
+            
+            return {
+                "name": playlist_info['name'],
+                "id": playlist_info['id'],
+                "creator": playlist_info['creator'],
+                "description": playlist_info['description'],
+                "total_tracks": total_tracks,
+                "imported_tracks": added_count
+            }
+            
+        except Exception as e:
+            logger.error(f"导入歌单时出错: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {"error": f"导入歌单时出错: {e}"}
+            
+    async def remove_song(self, index):
+        """
+        从播放列表中删除指定索引的歌曲
+        
+        :param index: 歌曲索引（从1开始）
+        :return: 是否成功删除
+        """
+        try:
+            if not self.streamer or not self.playlist_manager:
+                return False
+                
+            return self.playlist_manager.remove_song_by_index(index)
+        except Exception as e:
+            print(f"删除歌曲时出错: {e}")
+            return False
+            
+    async def clear_playlist(self):
+        """
+        清空播放列表（不包括当前正在播放的歌曲）
+        
+        :return: 清除的歌曲数量
+        """
+        try:
+            if not self.streamer or not self.playlist_manager:
+                return 0
+                
+            return self.playlist_manager.clear_playlist()
+        except Exception as e:
+            print(f"清空播放列表时出错: {e}")
+            return 0

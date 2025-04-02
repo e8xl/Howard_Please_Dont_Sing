@@ -59,6 +59,13 @@ class PlaylistManager:
         self.play_mode = "sequential"  # 播放模式: sequential(顺序播放), random(随机播放), single_loop(单曲循环), list_loop(列表循环)
         # 保存已播放过的歌曲，用于列表循环
         self.played_songs = []
+        # 添加歌单相关属性
+        self.playlist_info = None  # 当前加载的歌单信息
+        self.playlist_tracks = []  # 歌单中的所有歌曲信息
+        self.playlist_track_index = 0  # 当前处理到的歌曲索引
+        self.download_queue = deque()  # 待下载歌曲队列
+        self.is_downloading = False  # 是否正在下载歌曲
+        self.download_task = None  # 下载任务
 
     def add_song(self, song_path, song_info=None):
         """
@@ -279,6 +286,128 @@ class PlaylistManager:
         }
         return self.play_mode, mode_names.get(self.play_mode, "未知模式")
 
+    def add_playlist_batch(self, tracks_info):
+        """
+        批量添加歌单中的歌曲信息到下载队列（不立即下载）
+        
+        :param tracks_info: 歌曲信息列表
+        :return: 添加的歌曲数量
+        """
+        count = 0
+        for track in tracks_info:
+            # 从track提取必要信息
+            song_id = str(track.get('id'))
+            
+            # 检查歌曲是否已存在本地，避免重复下载
+            from os.path import join, exists, abspath
+            
+            # 检查缓存文件是否已存在
+            relative_path = "./AudioLib"
+            absolute_path = abspath(relative_path)
+            file_path = join(absolute_path, f"{song_id}.mp3")
+            
+            # 准备歌曲信息
+            song_info = {
+                'id': song_id,
+                'song_name': track.get('name', '未知歌曲'),
+                'artist_name': ", ".join(ar.get('name', '未知艺术家') for ar in track.get('ar', [])),
+                'album_name': track.get('al', {}).get('name', '未知专辑'),
+                'file_path': file_path if exists(file_path) else None
+            }
+            
+            # 添加到下载队列，已存在的歌曲也添加（但不会再次下载）
+            self.download_queue.append(song_info)
+            count += 1
+            
+        return count
+
+    def remove_song_by_index(self, index):
+        """
+        从播放列表中删除指定索引的歌曲
+        
+        :param index: 歌曲索引（从1开始）
+        :return: 是否成功删除
+        """
+        if not self.playlist or index <= 0 or index > len(self.playlist):
+            return False
+            
+        # 将索引转换为0-based
+        index = index - 1
+        
+        # 获取要删除的歌曲路径
+        song_path = list(self.playlist)[index]
+        
+        # 如果是第一首歌曲（当前播放列表的头部），需要特殊处理
+        if index == 0:
+            self.playlist.popleft()
+        else:
+            # 创建一个新的队列，排除要删除的歌曲
+            temp_queue = deque()
+            for i, song in enumerate(self.playlist):
+                if i != index:
+                    temp_queue.append(song)
+            self.playlist = temp_queue
+            
+        # 从recently_added_songs中移除，如果存在
+        if song_path in self.recently_added_songs:
+            self.recently_added_songs.remove(song_path)
+            
+        return True
+
+    def clear_playlist(self):
+        """
+        清空播放列表（不包括当前正在播放的歌曲）
+        
+        :return: 清除的歌曲数量
+        """
+        count = len(self.playlist)
+        self.playlist.clear()
+        self.recently_added_songs.clear()
+        return count
+
+    def set_playlist_info(self, playlist_info):
+        """
+        设置当前加载的歌单信息
+        
+        :param playlist_info: 歌单详情信息
+        """
+        self.playlist_info = playlist_info
+        
+    def set_playlist_tracks(self, tracks):
+        """
+        设置歌单中的所有歌曲信息
+        
+        :param tracks: 歌曲信息列表
+        """
+        self.playlist_tracks = tracks
+        self.playlist_track_index = 0
+        
+    def get_playlist_info(self):
+        """
+        获取当前加载的歌单信息
+        
+        :return: 歌单信息字典
+        """
+        if not self.playlist_info:
+            return None
+            
+        # 提取有用的歌单信息
+        try:
+            playlist = self.playlist_info.get('playlist', {})
+            return {
+                'id': playlist.get('id', ''),
+                'name': playlist.get('name', '未知歌单'),
+                'description': playlist.get('description', ''),
+                'creator': playlist.get('creator', {}).get('nickname', '未知用户'),
+                'trackCount': playlist.get('trackCount', 0),
+                'playCount': playlist.get('playCount', 0),
+                'coverImgUrl': playlist.get('coverImgUrl', ''),
+                'createTime': playlist.get('createTime', 0)
+            }
+        except Exception as e:
+            print(f"解析歌单信息出错: {e}")
+            return None
+
 
 class FFmpegPipeStreamer:
     """FFmpeg管道流媒体播放器"""
@@ -391,12 +520,21 @@ class FFmpegPipeStreamer:
             empty_playlist_timer = 0
             # 将自动退出标志重置为False
             self.exit_due_to_empty_playlist = False
+            
+            # 启动下载管理任务
+            self._download_task = asyncio.create_task(self._manage_downloads())
 
             while self._running:
                 # 检查播放列表是否为空
                 current_audio_path = self.playlist_manager.get_current_audio()
 
                 if current_audio_path is None:
+                    # 如果播放列表为空但下载队列不为空，等待下载完成
+                    if len(self.playlist_manager.download_queue) > 0:
+                        print(f"播放列表为空，但还有 {len(self.playlist_manager.download_queue)} 首歌曲在下载队列")
+                        await asyncio.sleep(1)  # 等待下载任务完成
+                        continue
+                        
                     empty_playlist_timer += 1
                     if empty_playlist_timer >= 5:  # 连续5次检查播放列表为空
                         # 仅在非循环模式下退出，循环模式应该会一直有歌曲
@@ -551,6 +689,14 @@ class FFmpegPipeStreamer:
     async def stop(self):
         """停止所有FFmpeg进程"""
         self._running = False
+        
+        # 取消下载任务
+        if hasattr(self, '_download_task') and self._download_task:
+            self._download_task.cancel()
+            try:
+                await self._download_task
+            except asyncio.CancelledError:
+                pass
 
         # 停止播放器进程
         if self.ffmpeg_process_player:
@@ -620,6 +766,68 @@ class FFmpegPipeStreamer:
         except ValueError:
             print(f"无效的音量值: {new_volume}")
             return False
+
+    async def _manage_downloads(self):
+        """管理下载队列，按需下载歌曲"""
+        try:
+            print("启动下载管理任务")
+            while self._running:
+                # 如果队列为空，等待
+                if not self.playlist_manager.download_queue:
+                    await asyncio.sleep(1)
+                    continue
+                
+                # 获取下载队列长度和播放列表长度
+                queue_len = len(self.playlist_manager.download_queue)
+                playlist_len = len(self.playlist_manager.playlist)
+                
+                # 判断是否需要下载更多歌曲
+                # 策略：如果播放列表中的歌曲少于3首，从下载队列中取出歌曲下载
+                if playlist_len < 3 and queue_len > 0 and not self.playlist_manager.is_downloading:
+                    self.playlist_manager.is_downloading = True
+                    
+                    try:
+                        # 从队列中取出歌曲信息
+                        song_info = self.playlist_manager.download_queue.popleft()
+                        song_id = song_info.get('id')
+                        
+                        # 检查文件是否已经存在
+                        if song_info.get('file_path') and os.path.exists(song_info.get('file_path')):
+                            print(f"歌曲已存在本地，无需下载: {song_info.get('song_name')}")
+                            # 添加到播放列表
+                            self.playlist_manager.add_song(song_info.get('file_path'), song_info)
+                        else:
+                            print(f"下载歌曲: {song_info.get('song_name')} (ID: {song_id})")
+                            
+                            # 动态导入NeteaseAPI，避免循环导入
+                            import importlib
+                            NeteaseAPI = importlib.import_module("NeteaseAPI")
+                            
+                            # 下载歌曲
+                            result = await NeteaseAPI.download_music_by_id(song_id)
+                            
+                            if "error" in result:
+                                print(f"下载歌曲出错: {result['error']}")
+                            else:
+                                # 添加到播放列表
+                                self.playlist_manager.add_song(result['file_name'], result)
+                                print(f"下载完成: {result['song_name']}")
+                    except Exception as e:
+                        print(f"下载歌曲时出错: {e}")
+                    finally:
+                        self.playlist_manager.is_downloading = False
+                
+                await asyncio.sleep(1)  # 避免CPU占用过高
+                
+        except asyncio.CancelledError:
+            print("下载管理任务被取消")
+        except Exception as e:
+            print(f"下载管理任务异常: {e}")
+            import traceback
+            print(traceback.format_exc())
+        finally:
+            self.playlist_manager.is_downloading = False
+            print("下载管理任务结束")
 
 
 async def command_interface(streamer):

@@ -323,7 +323,10 @@ async def menu(msg: Message):
     text += "「下载 歌名-歌手(可选)」下载音乐（不要滥用球球了）\n"
     text += "「模式」「播放模式」更改播放模式，包括：顺序播放、随机播放、单曲循环、列表循环\n"
     text += "「当前模式」「查看模式」查看当前播放模式\n"
-    text += "「音量 [0.1-2.0]」调整音量大小"
+    text += "「音量 [0.1-2.0]」调整音量大小\n"
+    text += "「导入歌单 歌单URL [最大歌曲数] [频道ID]」导入网易云音乐歌单\n"
+    text += "「删除 索引 [频道ID]」从播放列表中删除指定索引的歌曲\n"
+    text += "「清空 [频道ID]」清空播放列表（不包括当前正在播放的歌曲）"
     c3.append(Module.Section(Element.Text(text, Types.Text.KMD)))
     c3.append(Module.Divider())  # 分割线
     c3.append(Module.Header('和我玩小游戏吧~ '))
@@ -1463,6 +1466,291 @@ async def get_current_mode(msg: Message, channel_id: str = ""):
 
 # endrigon
 
+# region 歌单管理功能
+@bot.command(name="import", aliases=["导入歌单", "歌单导入"])
+async def import_playlist(msg: Message, playlist_url: str = "", max_songs: int = 20, channel_id: str = ""):
+    """
+    导入网易云音乐歌单
+
+    :param msg: 消息对象
+    :param playlist_url: 歌单URL
+    :param max_songs: 最多导入的歌曲数量，默认20首
+    :param channel_id: 频道ID，可选
+    """
+    try:
+        # 检查是否提供了歌单URL
+        if not playlist_url:
+            await msg.reply("请提供歌单URL，例如：`import https://music.163.com/playlist?id=13621716`")
+            return
+
+        # 提取歌单ID
+        playlist_id = NeteaseAPI.parse_playlist_url(playlist_url)
+        if not playlist_id:
+            await msg.reply("无效的歌单URL，请提供正确的网易云音乐歌单链接")
+            return
+
+        # 验证max_songs参数
+        try:
+            max_songs = int(max_songs)
+            if max_songs <= 0:
+                max_songs = 20
+            elif max_songs > 50:  # 设置上限，避免导入过多歌曲
+                await msg.reply(f"为避免下载过多歌曲，最多支持导入50首歌曲，已自动调整为50首")
+                max_songs = 50
+        except ValueError:
+            max_songs = 20
+
+        # 确定目标频道
+        target_channel_id = None
+
+        # 如果没有提供channel_id参数，则获取用户所在的语音频道
+        if not channel_id:
+            user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
+            if not user_channels:
+                await msg.reply(
+                    '您当前不在任何语音频道中。请先加入一个语音频道，或提供频道ID作为参数，例如：`import 歌单URL 20 频道ID`')
+                return
+            target_channel_id = user_channels[0].id
+        else:
+            # 使用提供的频道ID
+            target_channel_id = channel_id.strip()
+
+        # 获取当前活跃频道列表
+        alive_data = await core.get_alive_channel_list()
+        if 'error' in alive_data:
+            await msg.reply(f"获取频道列表时发生错误: {alive_data['error']}")
+            return
+
+        # 检测机器人是否已在目标频道
+        is_in_channel, error = core.is_bot_in_channel(alive_data, target_channel_id)
+        if error:
+            await msg.reply(f"检查频道状态时发生错误: {error}")
+            return
+
+        # 如果机器人不在频道中，尝试加入频道
+        if not is_in_channel:
+            await msg.reply(f"机器人尚未加入频道 {target_channel_id}，正在尝试加入...")
+
+            join_data = await core.join_channel(target_channel_id)
+            if 'error' in join_data:
+                await msg.reply(f"加入频道失败: {join_data['error']}")
+                return
+
+            # 初始化推流任务
+            enhanced_streamer = core.EnhancedAudioStreamer(
+                join_data,
+                msg,
+                message_callback,
+                target_channel_id
+            )
+
+            # 启动推流服务
+            success = await enhanced_streamer.start()
+            if not success:
+                await msg.reply(f"启动推流服务失败")
+                # 离开频道
+                await core.leave_channel(target_channel_id)
+                return
+
+            # 保存推流任务
+            playlist_tasks[target_channel_id] = enhanced_streamer
+
+            # 启动保持频道活跃的任务
+            keep_alive_task = asyncio.create_task(core.keep_channel_alive(target_channel_id))
+            keep_alive_tasks[target_channel_id] = keep_alive_task
+
+            logger.info(f"已加入频道 {target_channel_id} 并启动推流服务")
+            await msg.reply(f"已加入频道 {target_channel_id}")
+
+        # 检查该频道是否有活跃的播放列表
+        if target_channel_id not in playlist_tasks or playlist_tasks[target_channel_id] is None:
+            await msg.reply('无法获取频道的播放列表管理器')
+            return
+
+        # 获取推流器
+        enhanced_streamer = playlist_tasks[target_channel_id]
+
+        # 显示导入进度消息
+        progress_msg = await msg.reply(f"正在从歌单 (ID: {playlist_id}) 导入歌曲，请稍候...")
+
+        # 导入歌单
+        result = await enhanced_streamer.import_playlist(playlist_id, max_songs)
+
+        if "error" in result:
+            await msg.reply(f"导入歌单失败: {result['error']}")
+            return
+
+        # 构建成功消息
+        playlist_name = result['name']
+        creator = result['creator']
+        total_tracks = result['total_tracks']
+        imported_tracks = result['imported_tracks']
+
+        description = result.get('description', '')
+        if description and len(description) > 100:
+            description = description[:100] + "..."
+
+        message_text = f"已成功导入歌单：**{playlist_name}**\n"
+        message_text += f"创建者：{creator}\n"
+        message_text += f"共导入 {imported_tracks}/{total_tracks} 首歌曲\n"
+
+        if description:
+            message_text += f"简介：{description}\n"
+
+        message_text += "\n歌曲将按需下载并自动播放，可通过`list`命令查看当前播放列表"
+
+        await msg.reply(message_text)
+
+        # 创建或更新监控任务
+        if target_channel_id not in auto_exit_tasks or auto_exit_tasks[target_channel_id].done():
+            logger.info(f"重新创建频道 {target_channel_id} 的监控任务")
+            task = asyncio.create_task(monitor_streamer_status(msg, target_channel_id))
+            auto_exit_tasks[target_channel_id] = task
+
+    except Exception as e:
+        error_msg = str(e)
+        if NeteaseAPI.is_api_connection_error(error_msg):
+            await msg.reply(NeteaseAPI.get_api_error_message())
+        else:
+            await msg.reply(f"导入歌单时发生错误: {e}")
+
+
+@bot.command(name="remove", aliases=["删除", "rm"])
+async def remove_song(msg: Message, index: int = 0, channel_id: str = ""):
+    """
+    从播放列表中删除指定索引的歌曲
+
+    :param msg: 消息对象
+    :param index: 歌曲索引（从1开始）
+    :param channel_id: 频道ID，可选
+    """
+    try:
+        if index <= 0:
+            await msg.reply("请提供要删除的歌曲索引（从1开始），例如：`remove 2`")
+            return
+
+        # 确定目标频道
+        target_channel_id = None
+
+        # 如果没有提供channel_id参数，则获取用户所在的语音频道
+        if not channel_id:
+            user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
+            if not user_channels:
+                await msg.reply(
+                    '您当前不在任何语音频道中。请先加入一个语音频道，或提供频道ID作为参数，例如：`remove 2 频道ID`')
+                return
+            target_channel_id = user_channels[0].id
+        else:
+            # 使用提供的频道ID
+            target_channel_id = channel_id.strip()
+
+        # 获取当前活跃频道列表
+        alive_data = await core.get_alive_channel_list()
+        if 'error' in alive_data:
+            await msg.reply(f"获取频道列表时发生错误: {alive_data['error']}")
+            return
+
+        # 检测机器人是否已在目标频道
+        is_in_channel, error = core.is_bot_in_channel(alive_data, target_channel_id)
+        if error:
+            await msg.reply(f"检查频道状态时发生错误: {error}")
+            return
+
+        if not is_in_channel:
+            await msg.reply(f"机器人当前不在频道 {target_channel_id} 中")
+            return
+
+        # 检查该频道是否有活跃的播放列表
+        if target_channel_id not in playlist_tasks or playlist_tasks[target_channel_id] is None:
+            await msg.reply('该频道没有活跃的播放列表')
+            return
+
+        # 获取播放列表
+        enhanced_streamer = playlist_tasks[target_channel_id]
+        songs_list = await enhanced_streamer.list_songs()
+
+        if not songs_list or len(songs_list) <= 1:  # 只有一首歌曲是当前播放，不能删除
+            await msg.reply('播放列表为空或只有当前播放的歌曲，无法删除')
+            return
+
+        if index >= len(songs_list):
+            await msg.reply(f'索引超出范围，播放列表中只有 {len(songs_list) - 1} 首待播放歌曲')
+            return
+
+        # 获取要删除的歌曲名称（显示用）
+        song_to_remove = songs_list[index] if index < len(songs_list) else None
+
+        # 删除歌曲
+        success = await enhanced_streamer.remove_song(index)
+
+        if success:
+            await msg.reply(f"已从播放列表删除歌曲：{song_to_remove}")
+        else:
+            await msg.reply(f"删除歌曲失败")
+
+    except Exception as e:
+        await msg.reply(f"删除歌曲时发生错误: {e}")
+
+
+@bot.command(name="clear", aliases=["清空", "清除"])
+async def clear_playlist(msg: Message, channel_id: str = ""):
+    """
+    清空播放列表（不包括当前正在播放的歌曲）
+
+    :param msg: 消息对象
+    :param channel_id: 频道ID，可选
+    """
+    try:
+        # 确定目标频道
+        target_channel_id = None
+
+        # 如果没有提供channel_id参数，则获取用户所在的语音频道
+        if not channel_id:
+            user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
+            if not user_channels:
+                await msg.reply(
+                    '您当前不在任何语音频道中。请先加入一个语音频道，或提供频道ID作为参数，例如：`clear 频道ID`')
+                return
+            target_channel_id = user_channels[0].id
+        else:
+            # 使用提供的频道ID
+            target_channel_id = channel_id.strip()
+
+        # 获取当前活跃频道列表
+        alive_data = await core.get_alive_channel_list()
+        if 'error' in alive_data:
+            await msg.reply(f"获取频道列表时发生错误: {alive_data['error']}")
+            return
+
+        # 检测机器人是否已在目标频道
+        is_in_channel, error = core.is_bot_in_channel(alive_data, target_channel_id)
+        if error:
+            await msg.reply(f"检查频道状态时发生错误: {error}")
+            return
+
+        if not is_in_channel:
+            await msg.reply(f"机器人当前不在频道 {target_channel_id} 中")
+            return
+
+        # 检查该频道是否有活跃的播放列表
+        if target_channel_id not in playlist_tasks or playlist_tasks[target_channel_id] is None:
+            await msg.reply('该频道没有活跃的播放列表')
+            return
+
+        # 清空播放列表
+        enhanced_streamer = playlist_tasks[target_channel_id]
+        count = await enhanced_streamer.clear_playlist()
+
+        if count > 0:
+            await msg.reply(f"已清空播放列表，移除了 {count} 首歌曲")
+        else:
+            await msg.reply("播放列表已经是空的")
+
+    except Exception as e:
+        await msg.reply(f"清空播放列表时发生错误: {e}")
+
+
+# endregion
 
 # region 机器人运行主程序
 # 机器人运行日志 监测运行状态
