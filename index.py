@@ -1291,11 +1291,36 @@ async def s1_command(msg: Message, *args):
             await msg.reply("未找到相关音乐")
             return
 
-        # 只返回格式化的列表部分
+        # 创建卡片消息
+        cm = CardMessage()
+        card = Card(Module.Header('搜索结果如下：'))
+        
+        # 添加用户头像
+        card.append(Module.Container(Element.Image(src=msg.author.avatar)))
+        card.append(Module.Divider())  # 分割线
+        
+        # 获取搜索结果和第一首歌曲ID
         formatted_results = search_results["formatted_list"]
-        # 分割获取第一首歌
-        first_song = formatted_results.split('\n')[0]
-        await msg.reply(f"搜索结果：\n{formatted_results}\n\n点歌指令示例：点歌 {first_song}")
+        first_song_id = search_results["first_song_id"]
+        
+        # 显示结果并美化格式
+        songs_list = formatted_results.split('\n')
+        first_song = songs_list[0] if songs_list else ""
+        
+        # 搜索结果部分
+        card.append(Module.Section(Element.Text(f"**搜索关键词**: {keyword}", Types.Text.KMD)))
+        card.append(Module.Section(Element.Text(formatted_results, Types.Text.KMD)))
+        
+        # 点歌提示
+        if first_song:
+            card.append(Module.Divider())
+            card.append(Module.Section(Element.Text(f"**点歌指令示例**: 点歌 {first_song}", Types.Text.KMD)))
+        
+        # 添加一言
+        card.append(Module.Context(Element.Text(f"{await local_hitokoto()}", Types.Text.KMD)))
+        
+        cm.append(card)
+        await msg.reply(cm)
     except Exception as e:
         error_msg = str(e)
         if NeteaseAPI.is_api_connection_error(error_msg):
