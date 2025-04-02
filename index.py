@@ -43,15 +43,15 @@ async def message_callback(msg, message):
             "这可能需要较长时间",
             "即将播放"
         ]
-        
+
         # 检查消息是否包含任何过程性提示
         is_process_message = any(phrase in message for phrase in process_messages)
-        
+
         if is_process_message:
             # 只记录到日志，不发送给用户
             logger.info(f"过程消息(未发送): {message}")
             return
-            
+
         # 直接回复原始消息
         await msg.reply(message)
         logger.info(f"发送消息: {message}")
@@ -75,7 +75,7 @@ async def monitor_streamer_status(msg, channel_id):
         # 等待5秒钟，确保推流器状态已更新
         await asyncio.sleep(5)
         logger.info(f"开始监控频道 {channel_id} 的推流器状态")
-        
+
         # 初始化空播放列表标志
         empty_playlist = False
 
@@ -146,26 +146,27 @@ async def monitor_streamer_status(msg, channel_id):
                         logger.info(f"频道 {channel_id} 已不在播放列表任务中，终止监控")
                         empty_playlist = False  # 避免后续操作
                         break
-                        
+
                     enhanced_streamer = playlist_tasks[channel_id]
                     # 确认退出标志仍然为True
-                    if hasattr(enhanced_streamer.streamer, 'exit_due_to_empty_playlist') and not enhanced_streamer.streamer.exit_due_to_empty_playlist:
+                    if hasattr(enhanced_streamer.streamer,
+                               'exit_due_to_empty_playlist') and not enhanced_streamer.streamer.exit_due_to_empty_playlist:
                         logger.info(f"频道 {channel_id} 的退出标志已被取消，终止监控")
                         empty_playlist = False
                         break
-                        
+
                     # 检查是否有真实的新歌曲加入
                     has_real_songs = False
-                    
+
                     # 检查播放列表和下载队列是否确实有内容
                     if hasattr(enhanced_streamer.streamer, 'playlist_manager'):
                         has_current_song = enhanced_streamer.streamer.playlist_manager.current_song is not None
                         has_playlist_songs = len(enhanced_streamer.streamer.playlist_manager.playlist) > 0
                         has_download_queue = len(enhanced_streamer.streamer.playlist_manager.download_queue) > 0
                         has_temp_playlist = len(enhanced_streamer.streamer.playlist_manager.temp_playlist) > 0
-                        
+
                         has_real_songs = has_current_song or has_playlist_songs or has_download_queue or has_temp_playlist
-                    
+
                     # 仅当确实有歌曲时才取消退出
                     if has_real_songs:
                         # 重置退出标志
@@ -215,7 +216,7 @@ async def monitor_streamer_status(msg, channel_id):
             if empty_playlist and channel_id in playlist_tasks:
                 enhanced_streamer = playlist_tasks[channel_id]
                 songs_list = await enhanced_streamer.list_songs()
-                
+
                 # 再次进行全面检查，确保播放列表确实为空
                 has_real_songs = False
                 if hasattr(enhanced_streamer.streamer, 'playlist_manager'):
@@ -223,9 +224,9 @@ async def monitor_streamer_status(msg, channel_id):
                     has_playlist_songs = len(enhanced_streamer.streamer.playlist_manager.playlist) > 0
                     has_download_queue = len(enhanced_streamer.streamer.playlist_manager.download_queue) > 0
                     has_temp_playlist = len(enhanced_streamer.streamer.playlist_manager.temp_playlist) > 0
-                    
+
                     has_real_songs = has_current_song or has_playlist_songs or has_download_queue or has_temp_playlist
-                
+
                 # 有真实歌曲时，取消退出
                 if has_real_songs:
                     logger.info(f"最终检查发现有歌曲，取消退出频道 {channel_id}")
@@ -234,7 +235,7 @@ async def monitor_streamer_status(msg, channel_id):
                     # 重置empty_playlist标志
                     empty_playlist = False
                     continue
-                
+
                 # 以下为原有逻辑，只有确认没有任何歌曲后才会执行
                 # 再次确认播放列表确实为空，避免误判断
                 if not songs_list or len(songs_list) == 0:
@@ -242,10 +243,10 @@ async def monitor_streamer_status(msg, channel_id):
                     has_pending_downloads = False
                     if hasattr(enhanced_streamer.streamer, 'playlist_manager'):
                         has_pending_downloads = (
-                            len(enhanced_streamer.streamer.playlist_manager.download_queue) > 0 or
-                            len(enhanced_streamer.streamer.playlist_manager.temp_playlist) > 0
+                                len(enhanced_streamer.streamer.playlist_manager.download_queue) > 0 or
+                                len(enhanced_streamer.streamer.playlist_manager.temp_playlist) > 0
                         )
-                    
+
                     if not has_pending_downloads:
                         logger.info(f"最终确认：频道 {channel_id} 没有任何歌曲，执行退出操作")
                         # 执行退出操作 - 不能直接调用exit_command，需要手动执行退出逻辑
@@ -430,15 +431,15 @@ async def menu(msg: Message):
     text = "「点歌 歌名」即可完成点歌任务\n"
     text += "「点歌 https://music.163.com/song?id=xxx」可以通过歌曲链接点歌\n"
     text += "「点歌 https://music.163.com/dj?id=xxx」可以播放电台节目\n"
-    text += "「pc \"歌名或网易云链接\" \"频道ID\"」指定频道点歌，支持歌曲和电台\n"
+    # text += "「pc \"歌名或网易云链接\" \"频道ID\"」指定频道点歌，支持歌曲和电台\n"
     text += "「列表」「歌单」查看当前播放列表\n"
     text += "「跳过」「下一首」跳过当前正在播放的歌曲\n"
     text += "「搜索 歌名-歌手(可选)」搜索音乐\n"
-    text += "「下载 歌名-歌手(可选)」下载音乐（不要滥用球球了）\n"
+    # text += "「下载 歌名-歌手(可选)」下载音乐（不要滥用球球了）\n"
     text += "「模式」「播放模式」更改播放模式，包括：顺序播放、随机播放、单曲循环、列表循环\n"
     text += "「当前模式」「查看模式」查看当前播放模式\n"
-    text += "「音量 [0.1-2.0]」调整音量大小\n"
-    text += "「导入歌单 歌单URL [最大歌曲数] [频道ID]」导入网易云音乐歌单\n"
+    # text += "「音量 [0.1-2.0]」调整音量大小\n"
+    text += "「导入歌单 歌单URL [播放模式] [频道ID]」导入网易云音乐歌单，默认导入全部歌曲\n"
     text += "「删除 索引 [频道ID]」从播放列表中删除指定索引的歌曲\n"
     text += "「清空 [频道ID]」清空播放列表（不包括当前正在播放的歌曲）"
     c3.append(Module.Section(Element.Text(text, Types.Text.KMD)))
@@ -464,13 +465,11 @@ async def menu(msg: Message):
     '''
 
     c3.append(Module.Context(
-        Element.Text(f"{await local_hitokoto()}", Types.Text.KMD)  # 插入一言功能
+        Element.Text(f"{await local_hitokoto()}", Types.Text.KMD)  # 插入本地一言功能
     ))
 
     cm.append(c3)
     await msg.reply(cm)
-    # 该命令不再需要设置游戏状态，因为在启动时已经设置
-    # await bot.client.update_playing_game(2128858)
 
 
 # 娱乐项目
@@ -975,7 +974,7 @@ async def skip_song(msg: Message, channel_id: str = ""):
     try:
         # 确定目标频道
         target_channel_id = None
-        
+
         # 如果没有提供channel_id参数，则获取用户所在的语音频道
         if not channel_id:
             user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
@@ -987,41 +986,41 @@ async def skip_song(msg: Message, channel_id: str = ""):
         else:
             # 使用提供的频道ID
             target_channel_id = channel_id.strip()
-            
+
         # 检查该频道是否有活跃的播放列表
         if target_channel_id not in playlist_tasks or playlist_tasks[target_channel_id] is None:
             await msg.reply(f'频道 {target_channel_id} 没有活跃的播放列表')
             return
-            
+
         # 获取流媒体对象
         enhanced_streamer = playlist_tasks[target_channel_id]
-        
+
         # 获取播放列表管理器
         playlist_manager = enhanced_streamer.playlist_manager
-        
+
         # 获取当前播放的歌曲
         old_song = playlist_manager.current_song
         if not old_song:
             await msg.reply(f"频道 {target_channel_id} 没有正在播放的歌曲")
             return
-            
+
         try:
             # 跳过当前歌曲
             old, new = await enhanced_streamer.skip_current()
-            
+
             if old and new:
                 # 获取下一首歌曲名称
                 new_title = os.path.basename(new)
-                
+
                 # 获取更好的歌曲名称（如果有）
                 if new in playlist_manager.songs_info:
                     new_info = playlist_manager.songs_info[new]
                     new_title = f"{new_info.get('song_name', '')} - {new_info.get('artist_name', '')}"
-                    
+
                 # 如果有下一首歌，将它添加到recently_added_songs队列中，避免重复通知
                 if new:
                     playlist_manager.recently_added_songs.append(new)
-                
+
                 # 构建消息
                 await msg.reply(f"频道 {target_channel_id} 即将播放: {new_title}")
             elif old and not new:
@@ -1032,7 +1031,7 @@ async def skip_song(msg: Message, channel_id: str = ""):
                 await msg.reply(f"频道 {target_channel_id} 跳过歌曲失败")
         except Exception as e:
             await msg.reply(f"跳过歌曲时发生错误: {e}")
-            
+
     except Exception as e:
         await msg.reply(f"跳过歌曲时发生错误: {e}")
 
@@ -1589,7 +1588,8 @@ async def import_playlist(msg: Message, playlist_url: str = "", play_mode: str =
     try:
         # 检查是否提供了歌单URL
         if not playlist_url:
-            await msg.reply("请提供歌单URL，例如：`import https://music.163.com/playlist?id=13621716`\n可选参数：播放模式 [顺序/随机/单曲/循环]，例如：`import 歌单URL 随机`")
+            await msg.reply(
+                "请提供歌单URL，例如：`import https://music.163.com/playlist?id=13621716`\n可选参数：播放模式 [顺序/随机/单曲/循环]，例如：`import 歌单URL 随机`")
             return
 
         # 提取歌单ID
@@ -1616,32 +1616,33 @@ async def import_playlist(msg: Message, playlist_url: str = "", play_mode: str =
                 "loop": "list_loop",
                 "循环": "list_loop"
             }
-            
+
             # 转换模式名称
             if play_mode.lower() in mode_mapping:
                 mode = mode_mapping[play_mode.lower()]
             else:
                 # 如果是数字或其他值，可能是旧的最大歌曲数参数，忽略它
                 if not play_mode.isdigit() and play_mode.lower() != "all":
-                    await msg.reply(f"无效的播放模式: {play_mode}，将使用默认模式。\n可用模式：顺序播放、随机播放、单曲循环、列表循环")
-        
+                    await msg.reply(
+                        f"无效的播放模式: {play_mode}，将使用默认模式。\n可用模式：顺序播放、随机播放、单曲循环、列表循环")
+
         # 获取歌单详情（后台处理，不通知用户）
         playlist_detail = await NeteaseAPI.get_playlist_detail(playlist_id)
         if "error" in playlist_detail:
             await msg.reply(f"获取歌单信息失败: {playlist_detail['error']}")
             return
-            
+
         # 获取歌单属性
         playlist_name = "未知歌单"
         playlist_creator = "未知用户"
         total_tracks = 0
-        
+
         if "playlist" in playlist_detail:
             playlist = playlist_detail.get('playlist', {})
             playlist_name = playlist.get('name', '未知歌单')
             playlist_creator = playlist.get('creator', {}).get('nickname', '未知用户')
             total_tracks = playlist.get('trackCount', 0)
-        
+
         # 默认导入全部歌曲
         max_songs_int = 0  # 0表示导入全部歌曲
 
