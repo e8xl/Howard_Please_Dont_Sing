@@ -52,6 +52,26 @@ async def message_callback(msg, message):
             logger.info(f"过程消息(未发送): {message}")
             return
 
+        # 检查是否是播放消息
+        if "正在播放:" in message or "正在播放：" in message:
+            logger.info(f"收到播放消息: {message}")
+
+            # 从消息对象中获取频道ID
+            # 检查该消息是否与特定频道相关
+            channel_id = None
+
+            # 遍历所有播放器任务，找到与当前消息对象关联的频道
+            for ch_id, enhanced_streamer in playlist_tasks.items():
+                if hasattr(enhanced_streamer, 'message_obj') and enhanced_streamer.message_obj == msg:
+                    channel_id = ch_id
+                    break
+
+            if channel_id:
+                # 调用播放卡片函数而不是发送简单文本
+                await playing_songcard(msg, channel_id, auto_mode=True)
+                logger.info(f"已替换为播放卡片显示: {message}")
+                return
+
         # 直接回复原始消息
         await msg.ctx.channel.send(message)
         logger.info(f"发送消息: {message}")
@@ -1992,8 +2012,8 @@ async def clear_playlist(msg: Message, channel_id: str = ""):
 
 # endregion
 
-@bot.command(name='tc', aliases=['testcard'])
-async def playing_songcard(msg: Message, channel_id: str = ""):
+
+async def playing_songcard(msg: Message, channel_id: str = "", auto_mode: bool = False):
     try:
         target_channel_id = None
 
@@ -2001,7 +2021,9 @@ async def playing_songcard(msg: Message, channel_id: str = ""):
         if not channel_id:
             user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
             if not user_channels:
-                await msg.reply('您当前不在任何语音频道中。请先加入一个语音频道，或提供频道ID作为参数，例如：`tc 频道ID`')
+                if not auto_mode:
+                    await msg.reply(
+                        '您当前不在任何语音频道中。请先加入一个语音频道，或提供频道ID作为参数，例如：`tc 频道ID`')
                 return
             target_channel_id = user_channels[0].id
         else:
@@ -2010,7 +2032,9 @@ async def playing_songcard(msg: Message, channel_id: str = ""):
 
         # 检查该频道是否有活跃的播放列表
         if target_channel_id not in playlist_tasks or playlist_tasks[target_channel_id] is None:
-            await msg.reply('该频道没有活跃的播放列表')
+            if not auto_mode:
+                await msg.reply('该频道没有活跃的播放列表')
+            logger.info(f"尝试为频道 {target_channel_id} 生成播放卡片，但没有活跃的播放列表")
             return
 
         # 获取播放列表管理器
@@ -2020,7 +2044,9 @@ async def playing_songcard(msg: Message, channel_id: str = ""):
         # 获取当前播放的歌曲信息
         current_song = playlist_manager.current_song
         if not current_song:
-            await msg.reply('当前没有正在播放的歌曲')
+            if not auto_mode:
+                await msg.reply('当前没有正在播放的歌曲')
+            logger.info(f"尝试为频道 {target_channel_id} 生成播放卡片，但当前没有正在播放的歌曲")
             return
 
         # 获取歌曲详细信息
@@ -2171,7 +2197,10 @@ async def playing_songcard(msg: Message, channel_id: str = ""):
         cm.append(c3)
         await msg.ctx.channel.send(cm)
     except Exception as e:
-        await msg.reply(f"生成播放卡片时发生错误: {e}")
+        error_msg = f"生成播放卡片时发生错误: {e}"
+        logger.error(error_msg)
+        if not auto_mode:
+            await msg.reply(error_msg)
 
 
 # region 机器人运行主程序
