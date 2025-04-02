@@ -2192,8 +2192,19 @@ async def playing_songcard(msg: Message, channel_id: str = "", auto_mode: bool =
             Module.ActionGroup(
                 Element.Button('下一首', 'NEXT', Types.Click.RETURN_VAL),
                 Element.Button('清空歌单', 'CLEAR', Types.Click.RETURN_VAL),
-                Element.Button('循环模式', 'LOOP', Types.Click.RETURN_VAL)),
+                Element.Button('循环模式', 'LOOP', Types.Click.RETURN_VAL),
+                Element.Button('退出频道', 'EXIT', Types.Click.RETURN_VAL)),
+
+            Module.Divider(),
+            Module.Section(
+                Element.Text("👈点歌来自", type=Types.Text.KMD),
+                Element.Image(src=msg.author.avatar,size=Types.Size.SM,circle=True)
+
+            ),
             color="#6AC629")
+        c3.append(Module.Context(
+            Element.Text(f"{await local_hitokoto()}", Types.Text.KMD)  # 插入本地一言功能
+        ))
         cm.append(c3)
         await msg.ctx.channel.send(cm)
     except Exception as e:
@@ -2202,6 +2213,15 @@ async def playing_songcard(msg: Message, channel_id: str = "", auto_mode: bool =
         if not auto_mode:
             await msg.reply(error_msg)
 
+
+# region 测试
+
+@bot.command(name='tc', aliases=['testcard'])
+async def test_card(msg: Message, channel_id: str = ""):
+    await playing_songcard(msg, channel_id)
+
+
+# endregion
 
 # region 机器人运行主程序
 # 机器人运行日志 监测运行状态
