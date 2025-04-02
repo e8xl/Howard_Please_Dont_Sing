@@ -53,7 +53,7 @@ async def message_callback(msg, message):
             return
 
         # 直接回复原始消息
-        await msg.reply(message)
+        await msg.ctx.channel.send(message)
         logger.info(f"发送消息: {message}")
     except Exception as e:
         logger.error(f"发送消息失败: {e}")
@@ -129,7 +129,7 @@ async def monitor_streamer_status(msg, channel_id):
 
                 # 确保用户收到通知
                 try:
-                    await msg.reply(f"播放列表为空，10秒后将自动退出频道。如需继续播放，请添加歌曲。")
+                    await msg.ctx.channel.send(f"播放列表为空，10秒后将自动退出频道。如需继续播放，请添加歌曲。")
                 except Exception as e:
                     logger.error(f"通知用户退出频道失败: {e}")
 
@@ -615,6 +615,7 @@ async def exit_command(msg: Message, *args):
             await msg.reply(f"退出频道失败: {leave_result['error']}")
         else:
             # await msg.reply(f"已成功退出频道: {target_channel_id}")
+            await msg.reply(f"已成功退出频道")
             logger.info(f"已成功退出频道: {target_channel_id}")
     except Exception as e:
         logger.error(f"退出频道时发生错误: {e}")
@@ -885,7 +886,7 @@ async def neteasemusic_stream(msg: Message, *args):
         logger.info(log_message)
 
         # 只向用户发送简化的消息
-        await msg.reply(user_message)
+        await msg.ctx.channel.send(user_message)
 
         # 确保监控任务存在且正常运行
         if target_channel_id not in auto_exit_tasks or auto_exit_tasks[target_channel_id].done():
@@ -1022,10 +1023,17 @@ async def skip_song(msg: Message, channel_id: str = ""):
                     playlist_manager.recently_added_songs.append(new)
 
                 # 构建消息
-                await msg.reply(f"频道 {target_channel_id} 即将播放: {new_title}")
+                await msg.ctx.channel.send(f"频道 {target_channel_id} 即将播放: {new_title}")
             elif old and not new:
                 # 没有下一首歌了
-                await msg.reply(f"频道 {target_channel_id} 已跳过: {os.path.basename(old)}\n播放列表已播放完毕")
+                old_title = os.path.basename(old)
+
+                # 尝试获取更好的歌曲名称（如果有）
+                if old in playlist_manager.songs_info:
+                    old_info = playlist_manager.songs_info[old]
+                    old_title = f"{old_info.get('song_name', '')} - {old_info.get('artist_name', '')}"
+
+                await msg.ctx.channel.send(f"频道 {target_channel_id} 已跳过: {old_title}\n播放列表已播放完毕")
             else:
                 # 跳过失败
                 await msg.reply(f"频道 {target_channel_id} 跳过歌曲失败")
@@ -1294,31 +1302,31 @@ async def s1_command(msg: Message, *args):
         # 创建卡片消息
         cm = CardMessage()
         card = Card(Module.Header('搜索结果如下：'))
-        
+
         # 添加用户头像
         card.append(Module.Container(Element.Image(src=msg.author.avatar)))
         card.append(Module.Divider())  # 分割线
-        
+
         # 获取搜索结果和第一首歌曲ID
         formatted_results = search_results["formatted_list"]
         first_song_id = search_results["first_song_id"]
-        
+
         # 显示结果并美化格式
         songs_list = formatted_results.split('\n')
         first_song = songs_list[0] if songs_list else ""
-        
+
         # 搜索结果部分
         card.append(Module.Section(Element.Text(f"**搜索关键词**: {keyword}", Types.Text.KMD)))
         card.append(Module.Section(Element.Text(formatted_results, Types.Text.KMD)))
-        
+
         # 点歌提示
         if first_song:
             card.append(Module.Divider())
             card.append(Module.Section(Element.Text(f"**点歌指令示例**: 点歌 {first_song}", Types.Text.KMD)))
-        
+
         # 添加一言
         card.append(Module.Context(Element.Text(f"{await local_hitokoto()}", Types.Text.KMD)))
-        
+
         cm.append(card)
         await msg.reply(cm)
     except Exception as e:
@@ -1329,30 +1337,80 @@ async def s1_command(msg: Message, *args):
             await msg.reply(f"搜索失败: {e}")
 
 
-# 下载（测试）
 @bot.command(name='download', aliases=["d", "下载"])
 async def download(msg: Message, *args):
+    if not args:
+        await msg.reply("请提供关键词或ID")
+        return
+
     try:
-        if not args:
-            await msg.reply("参数缺失，请提供一个搜索关键字，例如：d 周杰伦")
-            return
-        else:
-            # await core.qrcode_login()
-            keyword = " ".join(args)  # 把空格后的所有内容拼接成一个字符串
-            await msg.reply(f"正在搜索关键字: {keyword}")
-            songs = await NeteaseAPI.download_music(keyword)
-            if "error" in songs:
-                await msg.reply(f"发生错误: {songs['error']}")
+        # 组合关键词为字符串
+        keyword = " ".join(args)
+
+        # 如果是歌曲ID（纯数字）
+        if keyword.isdigit():
+            music_id = keyword
+            # 直接使用ID获取歌曲URL
+            song_url_info = await NeteaseAPI.get_song_url(music_id)
+
+            if "error" in song_url_info:
+                await msg.reply(f"获取歌曲URL出错: {song_url_info['error']}")
                 return
-            await msg.reply(f"歌曲：{songs['song_name']} - {songs['artist_name']}({songs['album_name']}) 下载完成\n"
-                            f"URL地址:{songs['download_url']}\n"
-                            f"路径:{songs['file_name']}")
-    except Exception as e:
-        error_msg = str(e)
-        if NeteaseAPI.is_api_connection_error(error_msg):
-            await msg.reply(NeteaseAPI.get_api_error_message())
+
+            # 获取下载链接和其他信息
+            song_url = song_url_info["song_url"]
+            song_name = song_url_info["song_name"]
+            artist_name = song_url_info["artist_name"]
+
+            # 下载歌曲以便缓存本地（如果还未缓存）
+            if not song_url_info["cached"]:
+                songs = await NeteaseAPI.download_music_by_id(music_id)
+                if "error" in songs:
+                    await msg.reply(f"下载歌曲失败: {songs['error']}")
+                    return
+
+            # 构建消息
+            await msg.reply(f"歌曲: {song_name} - {artist_name}\n下载链接: {song_url}")
+
         else:
-            await msg.reply(f"发生错误: {e}")
+            # 关键词搜索
+            try:
+                # 搜索网易云音乐
+                search_result = await NeteaseAPI.search_netease_music(keyword)
+
+                if isinstance(search_result, dict) and "formatted_list" in search_result:
+                    # 获取第一首歌曲ID
+                    first_song_id = search_result["first_song_id"]
+
+                    # 获取歌曲直链
+                    song_url_info = await NeteaseAPI.get_song_url(first_song_id)
+
+                    if "error" in song_url_info:
+                        await msg.reply(f"获取歌曲URL出错: {song_url_info['error']}")
+                        return
+
+                    # 获取下载链接和其他信息
+                    song_url = song_url_info["song_url"]
+                    song_name = song_url_info["song_name"]
+                    artist_name = song_url_info["artist_name"]
+
+                    # 下载歌曲以便缓存本地（如果还未缓存）
+                    if not song_url_info["cached"]:
+                        songs = await NeteaseAPI.download_music_by_id(first_song_id)
+                        if "error" in songs:
+                            await msg.reply(f"下载歌曲失败: {songs['error']}")
+                            return
+
+                    # 构建消息
+                    search_list = search_result["formatted_list"]
+                    await msg.reply(
+                        f"🔍 搜索 \"{keyword}\" 结果:\n{search_list}\n\n已选择第一首: {song_name} - {artist_name}\n下载链接: {song_url}")
+                else:
+                    await msg.reply(f"搜索失败: {search_result}")
+            except Exception as e:
+                await msg.reply(f"搜索和下载过程中出错: {e}")
+    except Exception as e:
+        await msg.reply(f"处理下载请求时出错: {e}")
 
 
 # qrcode login
@@ -1933,6 +1991,188 @@ async def clear_playlist(msg: Message, channel_id: str = ""):
 
 
 # endregion
+
+@bot.command(name='tc', aliases=['testcard'])
+async def playing_songcard(msg: Message, channel_id: str = ""):
+    try:
+        target_channel_id = None
+
+        # 如果没有提供channel_id参数，则获取用户所在的语音频道
+        if not channel_id:
+            user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
+            if not user_channels:
+                await msg.reply('您当前不在任何语音频道中。请先加入一个语音频道，或提供频道ID作为参数，例如：`tc 频道ID`')
+                return
+            target_channel_id = user_channels[0].id
+        else:
+            # 使用提供的频道ID
+            target_channel_id = channel_id.strip()
+
+        # 检查该频道是否有活跃的播放列表
+        if target_channel_id not in playlist_tasks or playlist_tasks[target_channel_id] is None:
+            await msg.reply('该频道没有活跃的播放列表')
+            return
+
+        # 获取播放列表管理器
+        enhanced_streamer = playlist_tasks[target_channel_id]
+        playlist_manager = enhanced_streamer.playlist_manager
+
+        # 获取当前播放的歌曲信息
+        current_song = playlist_manager.current_song
+        if not current_song:
+            await msg.reply('当前没有正在播放的歌曲')
+            return
+
+        # 获取歌曲详细信息
+        song_info = None
+        pic_url = "https://p2.music.126.net/6y-UleORITEDbvrOLV0Q8A==/5639395138885805.jpg"  # 默认封面
+        song_url = "https://music.163.com/"  # 默认网址
+        singer_url = "https://music.163.com/artist"  # 默认艺术家链接
+        album_url = "https://music.163.com/album"  # 默认专辑链接
+        song_name = os.path.basename(current_song)
+        artist_name = "未知艺术家"
+        album_name = "未知专辑"
+        duration = 0
+        audio_url = ""  # 音频直链
+
+        # 尝试从文件名获取歌曲ID
+        song_id = os.path.basename(current_song).split('.')[0]
+
+        # 如果是网易云音乐ID，尝试通过API获取详细信息和音频URL
+        if song_id.isdigit():
+            try:
+                # 导入NeteaseAPI
+                import NeteaseAPI
+
+                # 尝试获取歌曲URL和详情
+                song_url_info = await NeteaseAPI.get_song_url(song_id)
+
+                if "error" not in song_url_info:
+                    # 获取直链URL
+                    audio_url = song_url_info.get("song_url", "")
+
+                    # 获取歌曲详情
+                    song_detail = await NeteaseAPI.get_song_detail(song_id)
+
+                    if "error" not in song_detail:
+                        # 获取歌曲名称
+                        song_name = song_detail.get('name', song_name)
+
+                        # 获取艺术家信息
+                        if song_detail.get('artists'):
+                            artists = song_detail['artists']
+                            artist_name = ", ".join(
+                                [artist.get('name', '') for artist in artists if artist.get('name')])
+                            # 获取第一个艺术家的ID用于链接
+                            if artists and artists[0].get('id'):
+                                artist_id = artists[0]['id']
+                                singer_url = f"https://music.163.com/#/artist?id={artist_id}"
+
+                        # 获取专辑信息
+                        if song_detail.get('album'):
+                            album = song_detail['album']
+                            album_name = album.get('name', '未知专辑')
+                            # 获取专辑ID用于链接
+                            if album.get('id'):
+                                album_id = album['id']
+                                album_url = f"https://music.163.com/#/album?id={album_id}"
+                            # 获取专辑封面
+                            if album.get('picUrl'):
+                                pic_url = album['picUrl']
+
+                        # 获取歌曲时长
+                        duration = song_detail.get('duration', 0)  # 已转换为秒
+
+                        # 构建歌曲URL
+                        song_url = f"https://music.163.com/#/song?id={song_id}"
+
+                        print(f"从API获取到歌曲信息: {song_name} - {artist_name}")
+                    else:
+                        # 如果get_song_detail失败，但get_song_url成功，使用get_song_url的信息
+                        song_name = song_url_info.get('song_name', song_name)
+                        artist_name = song_url_info.get('artist_name', artist_name)
+                        album_name = song_url_info.get('album_name', album_name)
+                        pic_url = song_url_info.get('album_pic', pic_url)
+                        song_url = f"https://music.163.com/#/song?id={song_id}"
+                else:
+                    print(f"获取歌曲URL失败: {song_url_info['error']}")
+            except Exception as e:
+                print(f"通过API获取歌曲详情时出错: {e}")
+                # 如果API获取失败，回退到本地信息
+
+        # 如果API获取失败或不是网易云ID，尝试从本地信息获取
+        if not duration or duration == 0 or not artist_name or artist_name == "未知艺术家":
+            # 尝试从playlist_manager中获取信息
+            if current_song in playlist_manager.songs_info:
+                local_info = playlist_manager.songs_info[current_song]
+
+                # 只有在API没有获取到有效信息时才使用本地信息
+                if not song_name or song_name == os.path.basename(current_song):
+                    song_name = local_info.get('song_name', song_name)
+
+                if artist_name == "未知艺术家":
+                    artist_name = local_info.get('artist_name', artist_name)
+
+                if album_name == "未知专辑":
+                    album_name = local_info.get('album_name', album_name)
+
+                # 设置封面图片URL，如果有的话
+                if ('pic_url' in local_info and local_info['pic_url'] and
+                        pic_url == "https://p2.music.126.net/6y-UleORITEDbvrOLV0Q8A==/5639395138885805.jpg"):
+                    pic_url = local_info['pic_url']
+            else:
+                # 使用ffprobe获取基本信息
+                info = playlist_manager.get_song_info(current_song)
+                if not song_name or song_name == os.path.basename(current_song):
+                    song_name = info['title']
+
+                # 如果标题包含分隔符，尝试解析艺术家
+                if " - " in song_name and artist_name == "未知艺术家":
+                    parts = song_name.split(" - ", 1)
+                    song_name = parts[0]
+                    artist_name = parts[1]
+
+        # 获取歌曲时长（如果之前未获取）
+        if not duration or duration == 0:
+            duration = playlist_manager.get_song_duration(current_song)
+            if duration <= 0:
+                duration = 180  # 默认3分钟
+
+        # 创建卡片
+        cm = CardMessage()
+        c3 = Card(
+            Module.Header("正在播放： " + song_name),
+            Module.Context(
+                Element.Text(
+                    "歌手： [" + artist_name + "](" + singer_url +
+                    ")  — 专辑： [" + album_name + "](" + album_url + ")",
+                    Types.Text.KMD)),
+            # 添加音频模块，如果有直链就使用，否则只显示信息
+            Module.File(Types.File.AUDIO,
+                        src=audio_url,  # 如果获取到了直链就使用，否则为空
+                        title=song_name,
+                        cover=pic_url),
+            Module.Countdown(datetime.now() +
+                             timedelta(seconds=int(duration)),
+                             mode=Types.CountdownMode.SECOND),
+            Module.Divider(),
+            Module.Context(
+                Element.Image(
+                    src=
+                    "https://img.kookapp.cn/assets/2022-05/UmCnhm4mlt016016.png"
+                ),
+                Element.Text("网易云音乐  [在网页查看](" + song_url + ")",
+                             Types.Text.KMD)),
+            Module.ActionGroup(
+                Element.Button('下一首', 'NEXT', Types.Click.RETURN_VAL),
+                Element.Button('清空歌单', 'CLEAR', Types.Click.RETURN_VAL),
+                Element.Button('循环模式', 'LOOP', Types.Click.RETURN_VAL)),
+            color="#6AC629")
+        cm.append(c3)
+        await msg.ctx.channel.send(cm)
+    except Exception as e:
+        await msg.reply(f"生成播放卡片时发生错误: {e}")
+
 
 # region 机器人运行主程序
 # 机器人运行日志 监测运行状态

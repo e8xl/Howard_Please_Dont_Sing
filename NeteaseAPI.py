@@ -437,6 +437,77 @@ async def download_music_by_id(song_id: str):
         return {"error": str(e)}
 
 
+# 仅获取歌曲的URL，不下载
+async def get_song_url(song_id: str):
+    """
+    获取歌曲的播放URL，无论歌曲是否已在本地缓存
+    
+    Args:
+        song_id: 歌曲ID
+        
+    Returns:
+        包含歌曲URL和详情的字典
+    """
+    try:
+        # 确保已登录
+        await ensure_logged_in()
+        
+        # 加载Cookie
+        cookies = await load_cookies()
+        if not cookies:
+            return {"error": "未登录，请通知开发者完成登录操作"}
+            
+        async with aiohttp.ClientSession(cookies=cookies) as session:
+            # 获取歌曲详情
+            async with session.get(f"http://localhost:3000/song/detail?ids={song_id}") as detail_resp:
+                detail_data = await detail_resp.json()
+                if detail_data['code'] != 200:
+                    return {"error": "获取歌曲详情失败"}
+                
+                # 提取歌曲信息
+                song_info = detail_data.get('songs', [])
+                if not song_info:
+                    return {"error": f"未找到ID为 {song_id} 的歌曲"}
+                
+                song_info = song_info[0]
+                song_name = song_info['name']
+                artist_name = ", ".join(artist['name'] for artist in song_info['ar'])
+                album_name = song_info['al']['name']
+                album_pic = song_info.get('al', {}).get('picUrl', '')
+                
+                # 获取播放链接
+                async with session.get(
+                        f"http://localhost:3000/song/url?id={song_id}&br=320000") as url_resp:
+                    url_data = await url_resp.json()
+                    if url_data['code'] != 200 or not url_data.get('data') or not url_data['data'][0].get('url'):
+                        # 尝试获取下载链接作为备用
+                        async with session.get(
+                                f"http://localhost:3000/song/download/url/v1?id={song_id}&level=higher") as download_resp:
+                            download_data = await download_resp.json()
+                            if download_data['code'] != 200 or not download_data['data'].get('url'):
+                                return {"error": "无法获取歌曲链接，可能需要VIP权限"}
+                            song_url = download_data['data']['url']
+                    else:
+                        song_url = url_data['data'][0]['url']
+                
+                # 检查是否本地已缓存（仅用于信息返回，不影响URL获取）
+                is_cached, file_path = is_song_exists(song_id)
+                
+                return {
+                    "song_url": song_url,
+                    "song_name": song_name,
+                    "artist_name": artist_name,
+                    "album_name": album_name,
+                    "album_pic": album_pic,
+                    "cached": is_cached,
+                    "file_path": file_path if is_cached else ""
+                }
+    except Exception as e:
+        if is_api_connection_error(str(e)):
+            return {"error": get_api_error_message()}
+        return {"error": str(e)}
+
+
 # 检查电台节目是否已经存在于本地
 def is_radio_program_exists(program_id: str) -> tuple[bool, str]:
     """
@@ -599,6 +670,73 @@ async def get_playlist_detail(playlist_id: str):
                     raise Exception("获取歌单详情失败")
                 
                 return data
+    except Exception as e:
+        if is_api_connection_error(str(e)):
+            return {"error": get_api_error_message()}
+        return {"error": str(e)}
+
+async def get_song_detail(song_id: str):
+    """
+    获取歌曲详细信息
+    
+    Args:
+        song_id: 歌曲ID
+        
+    Returns:
+        歌曲详细信息
+    """
+    try:
+        # 确保已登录
+        await ensure_logged_in()
+        
+        # 加载Cookie
+        cookies = await load_cookies()
+        if not cookies:
+            return {"error": "未登录，请通知开发者完成登录操作"}
+        
+        async with aiohttp.ClientSession(cookies=cookies) as session:
+            async with session.get(f"http://localhost:3000/song/detail?ids={song_id}") as resp:
+                data = await resp.json()
+                if data['code'] != 200:
+                    raise Exception("获取歌曲详情失败")
+                
+                # 如果成功获取到歌曲信息
+                if data.get('songs') and len(data['songs']) > 0:
+                    song_info = data['songs'][0]
+                    
+                    # 提取重要信息
+                    result = {
+                        'name': song_info.get('name', ''),
+                        'id': song_info.get('id', ''),
+                        'duration': song_info.get('dt', 0) / 1000,  # 转换为秒
+                        'artists': [],
+                        'album': {
+                            'name': '',
+                            'id': '',
+                            'picUrl': ''
+                        }
+                    }
+                    
+                    # 提取艺术家信息
+                    if song_info.get('ar'):
+                        for artist in song_info['ar']:
+                            result['artists'].append({
+                                'name': artist.get('name', ''),
+                                'id': artist.get('id', '')
+                            })
+                    
+                    # 提取专辑信息
+                    if song_info.get('al'):
+                        album = song_info['al']
+                        result['album'] = {
+                            'name': album.get('name', ''),
+                            'id': album.get('id', ''),
+                            'picUrl': album.get('picUrl', '')
+                        }
+                    
+                    return result
+                else:
+                    return {"error": f"未找到ID为 {song_id} 的歌曲"}
     except Exception as e:
         if is_api_connection_error(str(e)):
             return {"error": get_api_error_message()}
