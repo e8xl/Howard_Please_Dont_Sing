@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 # 监测文件夹大小的阈值（字节）
 AUDIO_LIB_SIZE_ALERT_THRESHOLD = 200 * 1024 * 1024  # 第一个数字为MB
 
-from khl import Bot, Message
+from khl import Bot, Message, EventTypes, Event
 from khl.card import Card, CardMessage, Element, Module, Types
 
 import NeteaseAPI
@@ -20,6 +20,13 @@ from funnyAPI import weather, local_hitokoto  # , get_hitokoto
 
 # 创建logger
 logger = logging.getLogger(__name__)
+
+# 按钮点击的锁，防止连续点击
+BUTTON_LOCKS = {}
+BUTTON_COOLDOWN = 5  # 按钮冷却时间（秒）
+
+
+# 按钮点击事件处理
 
 
 # 修改消息回调函数
@@ -64,19 +71,28 @@ async def message_callback(msg, message):
             for ch_id, enhanced_streamer in playlist_tasks.items():
                 if hasattr(enhanced_streamer, 'message_obj') and enhanced_streamer.message_obj == msg:
                     channel_id = ch_id
+                    logger.info(f"找到消息对象关联的频道: {channel_id}")
                     break
 
             if channel_id:
                 # 调用播放卡片函数而不是发送简单文本
+                logger.info(f"将为频道 {channel_id} 生成播放卡片")
                 await playing_songcard(msg, channel_id, auto_mode=True)
                 logger.info(f"已替换为播放卡片显示: {message}")
                 return
+            else:
+                logger.warning(f"无法确定播放消息关联的频道，将使用普通文本消息")
 
         # 直接回复原始消息
         await msg.ctx.channel.send(message)
         logger.info(f"发送消息: {message}")
     except Exception as e:
         logger.error(f"发送消息失败: {e}")
+        # 尝试直接发送错误文本
+        try:
+            await msg.ctx.channel.send(f"发送消息失败: {e}")
+        except:
+            pass
 
 
 # 自动检查播放器状态的任务字典
@@ -469,6 +485,207 @@ async def set_bot_game_status(_):
 
 
 # endregion
+@bot.on_event(EventTypes.MESSAGE_BTN_CLICK)
+async def on_btn_clicked(_: Bot, e: Event):
+    try:
+        # 获取按钮值和用户信息
+        value = e.body.get('value', '')
+        user_id = e.body['user_info']['id']
+        user_nickname = e.body['user_info']['nickname']
+        
+        # 获取目标频道ID (用于发送响应消息)
+        target_id = e.body.get('target_id')
+        
+        if not target_id:
+            logger.error("无法获取target_id，按钮处理失败")
+            return
+            
+        logger.info(f"收到按钮点击：{value}，来自用户：{user_nickname}，响应频道：{target_id}")
+        
+        # 获取频道对象，而不是使用频道ID字符串
+        try:
+            # 从频道ID获取真正的Channel对象
+            channel = await bot.client.fetch_public_channel(target_id)
+            if not channel:
+                logger.error(f"无法获取频道对象，ID: {target_id}")
+                return
+        except Exception as fetch_ex:
+            logger.error(f"获取频道对象失败: {fetch_ex}")
+            return
+        
+        # 按钮值格式：操作类型_频道ID
+        parts = value.split('_', 1)
+        action = parts[0]
+        voice_channel_id = parts[1] if len(parts) > 1 else ""
+        
+        if not voice_channel_id:
+            await channel.send("操作失败：未提供有效的语音频道ID")
+            return
+        
+        # 检查该频道是否有活跃的播放列表
+        if voice_channel_id not in playlist_tasks or playlist_tasks[voice_channel_id] is None:
+            await channel.send("操作失败：找不到该频道的播放列表")
+            return
+        
+        # 处理按钮动作
+        if action == "NEXT":
+            # 处理"下一首"操作
+            try:
+                enhanced_streamer = playlist_tasks.get(voice_channel_id)
+                if enhanced_streamer:
+                    # 直接调用底层的skip_current方法
+                    old, new = await enhanced_streamer.skip_current()
+                    
+                    if new:
+                        # 获取下一首歌曲信息
+                        playlist_manager = enhanced_streamer.playlist_manager
+                        new_title = os.path.basename(new)
+                        
+                        if new in playlist_manager.songs_info:
+                            new_info = playlist_manager.songs_info[new]
+                            new_title = f"{new_info.get('song_name', '')} - {new_info.get('artist_name', '')}"
+                        
+                        await channel.send(f"来自 {user_nickname} 的操作：已切换下一首\n即将播放: {new_title}")
+                        
+                        # 尝试更新播放卡片
+                        try:
+                            # 创建简单消息对象
+                            class SimpleMsg:
+                                def __init__(self):
+                                    self.ctx = type('obj', (object,), {
+                                        'channel': channel,
+                                    })
+                                    self.author = type('obj', (object,), {
+                                        'avatar': e.body['user_info'].get('avatar', '')
+                                    })
+                                    
+                                async def reply(self, content):
+                                    await channel.send(content)
+                            
+                            # 稍等一会，让播放器有时间切歌
+                            await asyncio.sleep(1.5)
+                            await playing_songcard(SimpleMsg(), voice_channel_id, auto_mode=True)
+                        except Exception as card_ex:
+                            logger.error(f"更新播放卡片时出错: {card_ex}")
+                    else:
+                        await channel.send(f"来自 {user_nickname} 的操作：已跳过当前歌曲，播放列表已播放完毕")
+                else:
+                    await channel.send("操作失败：找不到该频道的播放器")
+            except Exception as ex:
+                logger.error(f"执行跳过操作时出错: {ex}")
+                await channel.send(f"执行跳过操作时出错: {ex}")
+        
+        elif action == "CLEAR":
+            # 处理"清空播放列表"操作
+            try:
+                enhanced_streamer = playlist_tasks.get(voice_channel_id)
+                if enhanced_streamer:
+                    # 直接调用clear_playlist方法
+                    count = await enhanced_streamer.clear_playlist()
+                    if count > 0:
+                        await channel.send(f"来自 {user_nickname} 的操作：已清空播放列表，移除了 {count} 首歌曲")
+                    else:
+                        await channel.send(f"来自 {user_nickname} 的操作：播放列表已经是空的")
+                else:
+                    await channel.send("操作失败：找不到该频道的播放器")
+            except Exception as ex:
+                logger.error(f"执行清空播放列表操作时出错: {ex}")
+                await channel.send(f"执行清空播放列表操作时出错: {ex}")
+        
+        elif action == "LOOP":
+            # 处理"循环模式"操作
+            try:
+                enhanced_streamer = playlist_tasks.get(voice_channel_id)
+                if enhanced_streamer:
+                    # 获取当前模式
+                    current_mode = await enhanced_streamer.get_play_mode()
+                    next_mode = None
+                    
+                    # 切换到下一个模式
+                    if current_mode[0] == "sequential":
+                        next_mode = "random"
+                    elif current_mode[0] == "random":
+                        next_mode = "single_loop"
+                    elif current_mode[0] == "single_loop":
+                        next_mode = "list_loop"
+                    else:
+                        next_mode = "sequential"
+                    
+                    # 设置新模式
+                    success = await enhanced_streamer.set_play_mode(next_mode)
+                    if success:
+                        new_mode_info = await enhanced_streamer.get_play_mode()
+                        await channel.send(f"来自 {user_nickname} 的操作：已将播放模式切换为 {new_mode_info[1]}")
+                    else:
+                        await channel.send(f"来自 {user_nickname} 的操作：切换播放模式失败")
+                else:
+                    await channel.send("操作失败：找不到该频道的播放器")
+            except Exception as ex:
+                logger.error(f"执行切换播放模式操作时出错: {ex}")
+                await channel.send(f"执行切换播放模式操作时出错: {ex}")
+        
+        elif action == "EXIT":
+            # 处理"退出频道"操作
+            try:
+                # 发送开始退出的消息
+                await channel.send(f"来自 {user_nickname} 的操作：正在退出频道...")
+                
+                # 先取消所有相关任务
+                keep_alive_task = keep_alive_tasks.pop(voice_channel_id, None)
+                if keep_alive_task:
+                    keep_alive_task.cancel()
+                    logger.info(f"已取消频道 {voice_channel_id} 的保持活跃任务")
+                
+                stream_monitor_task = stream_monitor_tasks.pop(voice_channel_id, None)
+                if stream_monitor_task:
+                    stream_monitor_task.cancel()
+                    logger.info(f"已取消频道 {voice_channel_id} 的流监控任务")
+                
+                auto_exit_task = auto_exit_tasks.pop(voice_channel_id, None)
+                if auto_exit_task:
+                    auto_exit_task.cancel()
+                    logger.info(f"已取消频道 {voice_channel_id} 的自动退出任务")
+                
+                # 停止播放列表和推流
+                enhanced_streamer = playlist_tasks.pop(voice_channel_id, None)
+                if enhanced_streamer:
+                    await enhanced_streamer.stop()
+                    logger.info(f"已停止频道 {voice_channel_id} 的推流任务")
+                
+                # 清理其他任务
+                stream_tasks.pop(voice_channel_id, None)
+                
+                # 最后调用core的leave_channel方法
+                leave_result = await core.leave_channel(voice_channel_id)
+                if 'error' in leave_result:
+                    await channel.send(f"来自 {user_nickname} 的操作：退出频道失败: {leave_result['error']}")
+                    logger.error(f"退出频道失败: {leave_result['error']}")
+                else:
+                    await channel.send(f"来自 {user_nickname} 的操作：已成功退出频道")
+                    logger.info(f"已成功退出频道: {voice_channel_id}")
+            except Exception as ex:
+                logger.error(f"执行退出频道操作时出错: {ex}")
+                try:
+                    await channel.send(f"执行退出频道操作时出错: {ex}")
+                except:
+                    logger.error("无法发送退出频道错误消息")
+        
+    except Exception as ex:
+        logger.error(f"处理按钮点击事件时出错: {ex}")
+        # 尝试发送错误消息
+        try:
+            target_id = e.body.get('target_id')
+            if target_id:
+                # 尝试获取频道对象并发送消息
+                try:
+                    channel = await bot.client.fetch_public_channel(target_id)
+                    if channel:
+                        await channel.send(f"处理按钮点击事件时出错: {ex}")
+                except Exception as channel_ex:
+                    logger.error(f"获取频道对象或发送错误消息失败: {channel_ex}")
+        except Exception as send_ex:
+            logger.error(f"发送错误消息失败: {send_ex}")
+
 
 # region 基础功能
 @bot.command(name='menu', aliases=['帮助', '菜单', "help"])
@@ -2319,10 +2536,10 @@ async def playing_songcard(msg: Message, channel_id: str = "", auto_mode: bool =
                 Element.Text("网易云音乐  [在网页查看](" + song_url + ")",
                              Types.Text.KMD)),
             Module.ActionGroup(
-                Element.Button('下一首', 'NEXT', Types.Click.RETURN_VAL),
-                Element.Button('清空歌单', 'CLEAR', Types.Click.RETURN_VAL),
-                Element.Button('循环模式', 'LOOP', Types.Click.RETURN_VAL),
-                Element.Button('退出频道', 'EXIT', Types.Click.RETURN_VAL)),
+                Element.Button('下一首', f'NEXT_{target_channel_id}', Types.Click.RETURN_VAL),
+                Element.Button('清空歌单', f'CLEAR_{target_channel_id}', Types.Click.RETURN_VAL),
+                Element.Button('循环模式', f'LOOP_{target_channel_id}', Types.Click.RETURN_VAL),
+                Element.Button('退出频道', f'EXIT_{target_channel_id}', Types.Click.RETURN_VAL)),
 
             Module.Divider(),
             Module.Section(
