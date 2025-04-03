@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 # 监测文件夹大小的阈值（字节）
 AUDIO_LIB_SIZE_ALERT_THRESHOLD = 200 * 1024 * 1024  # 第一个数字为MB
 
-from khl import Bot, Message, EventTypes, Event
+from khl import Bot, Message, EventTypes, Event, api
 from khl.card import Card, CardMessage, Element, Module, Types
 
 import NeteaseAPI
@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 BUTTON_LOCKS = {}  # 格式: {'频道ID_操作类型': 时间戳}
 BUTTON_COOLDOWN = 5  # 按钮冷却时间（秒）
 
+# 在文件顶部合适位置添加一个新的字典来跟踪每个频道的卡片消息ID
+# 在playlist_tasks变量附近添加
+card_messages = {}  # 用于跟踪每个频道的卡片消息ID {channel_id: msg_id}
+
 
 # 按钮点击事件处理
 
@@ -32,9 +36,9 @@ BUTTON_COOLDOWN = 5  # 按钮冷却时间（秒）
 # 修改消息回调函数
 async def message_callback(msg, message):
     """
-    发送消息到用户
+    消息回调函数，用于推流器发送状态消息
     
-    :param msg: 原始的Message对象，用于回复
+    :param msg: 消息对象
     :param message: 消息内容
     """
     try:
@@ -78,6 +82,10 @@ async def message_callback(msg, message):
                 # 调用播放卡片函数而不是发送简单文本
                 logger.info(f"将为频道 {channel_id} 生成播放卡片")
                 await playing_songcard(msg, channel_id, auto_mode=True)
+
+                # 启动任务来监控这首歌的播放状态
+                asyncio.create_task(monitor_song_completion(msg, channel_id))
+
                 logger.info(f"已替换为播放卡片显示: {message}")
                 return
             else:
@@ -85,14 +93,8 @@ async def message_callback(msg, message):
 
         # 直接回复原始消息
         await msg.ctx.channel.send(message)
-        logger.info(f"发送消息: {message}")
     except Exception as e:
-        logger.error(f"发送消息失败: {e}")
-        # 尝试直接发送错误文本
-        try:
-            await msg.ctx.channel.send(f"发送消息失败: {e}")
-        except:
-            pass
+        logger.error(f"处理消息回调时出错: {e}")
 
 
 # 自动检查播放器状态的任务字典
@@ -544,6 +546,17 @@ async def on_btn_clicked(_: Bot, e: Event):
         # 更新锁状态
         BUTTON_LOCKS[lock_key] = current_time
 
+        # 删除当前频道的卡片（如果存在）
+        if voice_channel_id in card_messages:
+            try:
+                card_id = card_messages[voice_channel_id]
+                await bot.client.gate.exec_req(api.Message.delete(card_id))
+                # 从字典中移除该卡片
+                del card_messages[voice_channel_id]
+                logger.info(f"按钮操作时删除了频道 {voice_channel_id} 的播放卡片")
+            except Exception as e:
+                logger.error(f"删除卡片时出错: {e}")
+
         # 处理按钮动作
         if action == "NEXT":
             # 处理"下一首"操作
@@ -890,53 +903,78 @@ async def play(msg: Message, *args):
 @bot.command(name="exit", aliases=["leave", "退出"])
 async def exit_command(msg: Message, *args):
     # 确定离开的频道
-    if args:
-        try:
-            # 不做强制类型转换，直接使用字符串形式的ID
-            target_channel_id = args[0]
-        except ValueError:
-            await msg.reply("提供的频道ID无效，请确保提供的是有效ID。")
-            return
+    target_channel_id = None
+
+    if args and args[0]:
+        # 使用第一个参数作为频道ID
+        target_channel_id = args[0].strip()
     else:
-        # 获取用户当前所在的语音频道
+        # 获取用户所在的语音频道
         user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
         if not user_channels:
-            await msg.reply('请先加入一个语音频道或提供频道ID后再使用退出功能')
+            await msg.reply('您当前不在任何语音频道中。请先加入一个语音频道，或提供频道ID作为参数，例如：`exit 频道ID`')
             return
         target_channel_id = user_channels[0].id
 
-    try:
-        # 停止播放列表和推流任务
-        if target_channel_id in playlist_tasks:
-            enhanced_streamer = playlist_tasks.pop(target_channel_id, None)
-            if enhanced_streamer:
-                await enhanced_streamer.stop()
+    # 获取当前的活跃频道列表
+    alive_data = await core.get_alive_channel_list()
+    if 'error' in alive_data:
+        await msg.reply(f"获取频道列表失败: {alive_data['error']}")
+        return
 
-        # 使用退出函数
-        leave_result = await core.leave_channel(target_channel_id)
-        if 'error' in leave_result:
-            await msg.reply(f"退出频道失败: {leave_result['error']}")
-        else:
-            # await msg.reply(f"已成功退出频道: {target_channel_id}")
-            await msg.reply(f"已成功退出频道")
-            logger.info(f"已成功退出频道: {target_channel_id}")
-    except Exception as e:
-        logger.error(f"退出频道时发生错误: {e}")
-        await msg.reply(f"退出频道时发生错误: {e}")
-    finally:
-        # 取消保持活跃任务
-        task = keep_alive_tasks.pop(target_channel_id, None)
-        if task:
-            task.cancel()
+    # 检查机器人是否在指定的频道中
+    is_in_channel, error = core.is_bot_in_channel(alive_data, target_channel_id)
+    if error:
+        await msg.reply(f"检查频道状态时发生错误: {error}")
+        return
 
-        # 清理所有相关任务和引用
-        stream_tasks.pop(target_channel_id, None)
-        stream_monitor_tasks.pop(target_channel_id, None)
+    if not is_in_channel:
+        await msg.reply(f"机器人不在语音频道 {target_channel_id} 中")
+        return
 
-        # 取消自动监控任务
-        task = auto_exit_tasks.pop(target_channel_id, None)
-        if task:
-            task.cancel()
+    # 删除该频道的播放卡片（如果有）
+    if target_channel_id in card_messages:
+        try:
+            card_id = card_messages[target_channel_id]
+            await bot.client.gate.exec_req(api.Message.delete(card_id))
+            # 从字典中移除该卡片
+            del card_messages[target_channel_id]
+            logger.info(f"退出频道时删除了频道 {target_channel_id} 的播放卡片")
+        except Exception as e:
+            logger.error(f"删除卡片时出错: {e}")
+
+    # 停止相关任务
+    keep_alive_task = keep_alive_tasks.pop(target_channel_id, None)
+    if keep_alive_task:
+        keep_alive_task.cancel()
+
+    stream_monitor_task = stream_monitor_tasks.pop(target_channel_id, None)
+    if stream_monitor_task:
+        stream_monitor_task.cancel()
+
+    auto_exit_task = auto_exit_tasks.pop(target_channel_id, None)
+    if auto_exit_task:
+        auto_exit_task.cancel()
+
+    # 停止播放列表和推流
+    enhanced_streamer = playlist_tasks.pop(target_channel_id, None)
+    if enhanced_streamer:
+        await enhanced_streamer.stop()
+
+    # 清理其他任务
+    stream_tasks.pop(target_channel_id, None)
+
+    # 使用退出函数退出语音频道
+    leave_result = await core.leave_channel(target_channel_id)
+    if 'error' in leave_result:
+        await msg.reply(f"退出频道失败: {leave_result['error']}")
+    else:
+        await msg.reply(f"已成功退出语音频道")
+
+    # 确保清理所有按钮锁
+    for k in list(BUTTON_LOCKS.keys()):
+        if k.startswith(target_channel_id):
+            BUTTON_LOCKS.pop(k, None)
 
 
 @bot.command(name="alive", aliases=['ping'])
@@ -1270,70 +1308,78 @@ async def list_playlist(msg: Message, channel_id: str = ""):
 @bot.command(name="skip", aliases=["跳过", "下一首"])
 async def skip_song(msg: Message, channel_id: str = ""):
     """
-    跳过当前歌曲
+    跳过当前播放的歌曲
     
     :param msg: 消息对象
-    :param channel_id: 频道ID，可选
+    :param channel_id: 频道ID，如果不提供则自动获取用户所在频道
     """
     try:
-        # 确定目标频道
+        # 获取目标频道ID
         target_channel_id = None
 
         # 如果没有提供channel_id参数，则获取用户所在的语音频道
         if not channel_id:
             user_channels = await msg.ctx.guild.fetch_joined_channel(msg.author)
             if not user_channels:
-                await msg.reply(
-                    '您当前不在任何语音频道中。请先加入一个语音频道，或提供频道ID作为参数，例如：`skip 频道ID`')
+                await msg.reply('请先加入一个语音频道，或提供频道ID作为参数，例如：`skip 频道ID`')
                 return
             target_channel_id = user_channels[0].id
         else:
             # 使用提供的频道ID
             target_channel_id = channel_id.strip()
 
-        # 检查该频道是否有活跃的播放列表
-        if target_channel_id not in playlist_tasks or playlist_tasks[target_channel_id] is None:
-            await msg.reply(f'频道 {target_channel_id} 没有活跃的播放列表')
+        # 获取频道列表，确保机器人在指定频道中
+        alive_data = await core.get_alive_channel_list()
+        if 'error' in alive_data:
+            await msg.reply(f"获取频道列表时发生错误: {alive_data['error']}")
             return
 
-        # 获取流媒体对象
+        # 检查机器人是否在指定的频道中
+        is_in_channel, error = core.is_bot_in_channel(alive_data, target_channel_id)
+        if error:
+            await msg.reply(f"检查频道状态时发生错误: {error}")
+            return
+
+        if not is_in_channel:
+            await msg.reply(f"机器人不在该语音频道中。请使用 `join` 命令加入频道。")
+            return
+
+        # 获取对应频道的流媒体推送器
+        if target_channel_id not in playlist_tasks:
+            await msg.reply("当前没有正在播放的音乐。")
+            return
+
+        # 直接获取EnhancedAudioStreamer实例
         enhanced_streamer = playlist_tasks[target_channel_id]
 
-        # 获取播放列表管理器
-        playlist_manager = enhanced_streamer.playlist_manager
+        # 如果有正在播放的卡片，删除它
+        if target_channel_id in card_messages:
+            try:
+                card_id = card_messages[target_channel_id]
+                await bot.client.gate.exec_req(api.Message.delete(card_id))
+                # 从字典中移除该卡片
+                del card_messages[target_channel_id]
+                logger.info(f"跳过歌曲时删除了频道 {target_channel_id} 的播放卡片")
+            except Exception as e:
+                logger.error(f"删除卡片时出错: {e}")
 
-        # 获取当前播放的歌曲
-        old_song = playlist_manager.current_song
-        if not old_song:
-            await msg.reply(f"频道 {target_channel_id} 没有正在播放的歌曲")
-            return
+        # 跳过当前歌曲
+        old, new = await enhanced_streamer.skip_current()
 
-        try:
-            # 跳过当前歌曲
-            old, new = await enhanced_streamer.skip_current()
+        if old:
+            # 获取歌曲标题
+            old_title = os.path.basename(old)
+            if old in enhanced_streamer.playlist_manager.songs_info:
+                old_info = enhanced_streamer.playlist_manager.songs_info[old]
+                old_title = f"{old_info.get('song_name', '')} - {old_info.get('artist_name', '')}"
 
-            if old:
-                # 获取旧歌曲的名称
-                old_title = os.path.basename(old)
-
-                # 尝试获取更好的歌曲名称（如果有）
-                if old in playlist_manager.songs_info:
-                    old_info = playlist_manager.songs_info[old]
-                    old_title = f"{old_info.get('song_name', '')} - {old_info.get('artist_name', '')}"
-
-                # 只发送已跳过的通知
-                if new:
-                    # 注意：这里不再发送"即将播放"的消息，让系统自动通知
-                    await msg.reply(f"已跳过: {old_title}")
-                else:
-                    # 没有下一首歌了
-                    await msg.reply(f"已跳过: {old_title}\n播放列表已播放完毕")
+            if new:
+                # 将在播放下一首歌曲的通知中显示
+                await msg.reply(f"已跳过: {old_title}")
             else:
-                # 跳过失败
-                await msg.reply(f"频道 {target_channel_id} 跳过歌曲失败")
-        except Exception as e:
-            await msg.reply(f"跳过歌曲时发生错误: {e}")
-
+                await msg.reply(f"已跳过: {old_title}\n没有更多歌曲可播放。")
+        else:
+            await msg.reply("当前没有正在播放的歌曲。")
     except Exception as e:
         await msg.reply(f"跳过歌曲时发生错误: {e}")
 
@@ -2396,6 +2442,15 @@ async def playing_songcard(msg: Message, channel_id: str = "", auto_mode: bool =
             logger.info(f"尝试为频道 {target_channel_id} 生成播放卡片，但当前没有正在播放的歌曲")
             return
 
+        # 删除该频道之前的卡片消息（如果有）
+        if target_channel_id in card_messages:
+            try:
+                old_msg_id = card_messages[target_channel_id]
+                await bot.client.gate.exec_req(api.Message.delete(old_msg_id))
+                logger.info(f"已删除频道 {target_channel_id} 的旧播放卡片")
+            except Exception as e:
+                logger.error(f"删除旧播放卡片时出错: {e}")
+
         # 获取歌曲详细信息
         song_info = None
         pic_url = "https://p2.music.126.net/6y-UleORITEDbvrOLV0Q8A==/5639395138885805.jpg"  # 默认封面
@@ -2571,7 +2626,15 @@ async def playing_songcard(msg: Message, channel_id: str = "", auto_mode: bool =
             Element.Text(f"{await local_hitokoto()}", Types.Text.KMD)  # 插入本地一言功能
         ))
         cm.append(c3)
-        await msg.ctx.channel.send(cm)
+
+        # 发送卡片并获取响应
+        response = await msg.ctx.channel.send(cm)
+
+        # 保存消息ID，用于后续删除
+        msg_id = response['msg_id']
+        card_messages[target_channel_id] = msg_id
+        logger.info(f"已为频道 {target_channel_id} 发送新播放卡片，消息ID: {msg_id}")
+
     except Exception as e:
         error_msg = f"生成播放卡片时发生错误: {e}"
         logger.error(error_msg)
@@ -2594,4 +2657,94 @@ logging.basicConfig(level='INFO')
 print("机器人已成功启动")
 bot.command.update_prefixes("")  # 设置命令前缀为空
 bot.run()
+
+
 # endregion
+
+async def monitor_song_completion(msg, channel_id):
+    """
+    监控歌曲播放状态，当歌曲播放完毕时删除卡片
+    
+    :param msg: 消息对象
+    :param channel_id: 频道ID
+    """
+    try:
+        if channel_id not in playlist_tasks or channel_id not in card_messages:
+            return
+
+        enhanced_streamer = playlist_tasks[channel_id]
+        # 获取当前播放的歌曲
+        current_song = enhanced_streamer.playlist_manager.current_song
+        if not current_song:
+            return
+
+        logger.info(f"开始监控频道 {channel_id} 的歌曲播放状态")
+
+        # 记录当前的卡片消息ID
+        card_id = card_messages.get(channel_id)
+        if not card_id:
+            return
+
+        # 记录当前监控的歌曲
+        monitoring_song = current_song
+
+        # 每2秒检查一次状态
+        while True:
+            # 检查频道是否仍然存在
+            if channel_id not in playlist_tasks:
+                logger.info(f"频道 {channel_id} 不再存在，停止监控")
+                break
+
+            enhanced_streamer = playlist_tasks[channel_id]
+
+            # 检查当前播放的歌曲是否已更改（说明已经切换到下一首）
+            if enhanced_streamer.playlist_manager.current_song != monitoring_song:
+                logger.info(f"频道 {channel_id} 的歌曲已切换，之前的卡片不需要删除")
+                break
+
+            # 检查推流器状态
+            if not hasattr(enhanced_streamer, "streamer") or enhanced_streamer.streamer is None:
+                logger.info(f"频道 {channel_id} 的推流器已停止，删除卡片")
+                try:
+                    await bot.client.gate.exec_req(api.Message.delete(card_id))
+                    # 从字典中移除该卡片
+                    if channel_id in card_messages and card_messages[channel_id] == card_id:
+                        del card_messages[channel_id]
+                except Exception as e:
+                    logger.error(f"删除卡片时出错: {e}")
+                break
+
+            # 获取当前播放进度
+            progress_info = await enhanced_streamer.get_current_progress()
+
+            # 如果没有进度信息或播放位置为0，可能是歌曲已经播放完毕
+            if not progress_info or progress_info['current_position'] == 0:
+                await asyncio.sleep(2)  # 再等待2秒确认
+                progress_info = await enhanced_streamer.get_current_progress()
+
+                # 再次检查，如果位置仍为0，可能确实是播放完毕了
+                if not progress_info or progress_info['current_position'] == 0:
+                    logger.info(f"检测到频道 {channel_id} 的歌曲可能已播放完毕")
+
+                    # 再次检查当前歌曲是否已更改
+                    if enhanced_streamer.playlist_manager.current_song != monitoring_song:
+                        logger.info(f"歌曲已切换，卡片将保留给新歌曲")
+                        break
+
+                    # 确认歌曲已播放完毕，删除卡片
+                    logger.info(f"频道 {channel_id} 的歌曲已播放完毕，删除卡片")
+                    try:
+                        await bot.client.gate.exec_req(api.Message.delete(card_id))
+                        # 从字典中移除该卡片
+                        if channel_id in card_messages and card_messages[channel_id] == card_id:
+                            del card_messages[channel_id]
+                    except Exception as e:
+                        logger.error(f"删除卡片时出错: {e}")
+                    break
+
+            await asyncio.sleep(2)  # 等待2秒再检查
+
+    except asyncio.CancelledError:
+        logger.info(f"频道 {channel_id} 的歌曲监控任务被取消")
+    except Exception as e:
+        logger.error(f"监控频道 {channel_id} 的歌曲状态时出错: {e}")
