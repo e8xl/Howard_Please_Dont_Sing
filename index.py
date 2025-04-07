@@ -546,17 +546,6 @@ async def on_btn_clicked(_: Bot, e: Event):
         # 更新锁状态
         BUTTON_LOCKS[lock_key] = current_time
 
-        # 删除当前频道的卡片（如果存在）
-        if voice_channel_id in card_messages:
-            try:
-                card_id = card_messages[voice_channel_id]
-                await bot.client.gate.exec_req(api.Message.delete(card_id))
-                # 从字典中移除该卡片
-                del card_messages[voice_channel_id]
-                logger.info(f"按钮操作时删除了频道 {voice_channel_id} 的播放卡片")
-            except Exception as e:
-                logger.error(f"删除卡片时出错: {e}")
-
         # 处理按钮动作
         if action == "NEXT":
             # 处理"下一首"操作
@@ -649,36 +638,50 @@ async def on_btn_clicked(_: Bot, e: Event):
         elif action == "EXIT":
             # 处理"退出频道"操作
             try:
-                # 发送开始退出的消息
-                await channel.send(f"来自 {user_nickname} 的操作：正在退出频道...")
+                # 删除当前频道的卡片（如果存在）
+                if voice_channel_id in card_messages:
+                    try:
+                        card_id = card_messages[voice_channel_id]
+                        await bot.client.gate.exec_req(api.Message.delete(card_id))
+                        # 从字典中移除该卡片
+                        del card_messages[voice_channel_id]
+                        logger.info(f"退出操作时删除了频道 {voice_channel_id} 的播放卡片")
+                    except Exception as e:
+                        logger.error(f"删除卡片时出错: {e}")
 
-                # 先取消所有相关任务
-                keep_alive_task = keep_alive_tasks.pop(voice_channel_id, None)
-                if keep_alive_task:
-                    keep_alive_task.cancel()
-                    logger.info(f"已取消频道 {voice_channel_id} 的保持活跃任务")
+                # 停止并退出语音频道
+                if voice_channel_id in playlist_tasks:
+                    try:
+                        # 停止推流
+                        enhanced_streamer = playlist_tasks[voice_channel_id]
+                        stop_success, _ = await enhanced_streamer.stop()
 
-                stream_monitor_task = stream_monitor_tasks.pop(voice_channel_id, None)
-                if stream_monitor_task:
-                    stream_monitor_task.cancel()
-                    logger.info(f"已取消频道 {voice_channel_id} 的流监控任务")
+                        if not stop_success:
+                            logger.warning(f"停止推流失败，频道ID: {voice_channel_id}")
 
-                auto_exit_task = auto_exit_tasks.pop(voice_channel_id, None)
-                if auto_exit_task:
-                    auto_exit_task.cancel()
-                    logger.info(f"已取消频道 {voice_channel_id} 的自动退出任务")
+                        # 清理任务
+                        playlist_tasks.pop(voice_channel_id, None)
 
-                # 停止播放列表和推流
-                enhanced_streamer = playlist_tasks.pop(voice_channel_id, None)
-                if enhanced_streamer:
-                    await enhanced_streamer.stop()
-                    logger.info(f"已停止频道 {voice_channel_id} 的推流任务")
+                        if voice_channel_id in stream_tasks:
+                            task = stream_tasks.pop(voice_channel_id, None)
+                            if task:
+                                task.cancel()
 
-                # 清理其他任务
-                stream_tasks.pop(voice_channel_id, None)
+                        if voice_channel_id in stream_monitor_tasks:
+                            task = stream_monitor_tasks.pop(voice_channel_id, None)
+                            if task:
+                                task.cancel()
 
-                # 最后调用core的leave_channel方法
+                        if voice_channel_id in keep_alive_tasks:
+                            task = keep_alive_tasks.pop(voice_channel_id, None)
+                            if task:
+                                task.cancel()
+                    except Exception as e:
+                        logger.error(f"停止推流任务时出错: {e}")
+
+                # 调用离开频道API
                 leave_result = await core.leave_channel(voice_channel_id)
+
                 if 'error' in leave_result:
                     await channel.send(f"来自 {user_nickname} 的操作：退出频道失败: {leave_result['error']}")
                     logger.error(f"退出频道失败: {leave_result['error']}")
@@ -2651,20 +2654,10 @@ async def test_card(msg: Message, channel_id: str = ""):
 
 # endregion
 
-# region 机器人运行主程序
-# 机器人运行日志 监测运行状态
-logging.basicConfig(level='INFO')
-print("机器人已成功启动")
-bot.command.update_prefixes("")  # 设置命令前缀为空
-bot.run()
-
-
-# endregion
-
 async def monitor_song_completion(msg, channel_id):
     """
     监控歌曲播放状态，当歌曲播放完毕时删除卡片
-    
+
     :param msg: 消息对象
     :param channel_id: 频道ID
     """
@@ -2748,3 +2741,13 @@ async def monitor_song_completion(msg, channel_id):
         logger.info(f"频道 {channel_id} 的歌曲监控任务被取消")
     except Exception as e:
         logger.error(f"监控频道 {channel_id} 的歌曲状态时出错: {e}")
+
+
+# region 机器人运行主程序
+# 机器人运行日志 监测运行状态
+logging.basicConfig(level='INFO')
+print("机器人已成功启动")
+bot.command.update_prefixes("")  # 设置命令前缀为空
+bot.run()
+
+# endregion
