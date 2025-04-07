@@ -1045,7 +1045,7 @@ class FFmpegPipeStreamer:
         # 启动推流FFmpeg进程
         streamer_cmd = [
             self.ffmpeg_path,
-            "-re",
+            "-re",  # 保留这个标志，双重保险控制速率
             "-f", "s16le",  # 从管道读取原始PCM数据
             "-ar", str(SAMPLE_RATE),
             "-ac", str(CHANNELS),
@@ -1247,6 +1247,7 @@ class FFmpegPipeStreamer:
                     player_cmd = [
                         self.ffmpeg_path,
                         "-v", "quiet",
+                        "-re",  # 添加-re标志控制输入读取速度
                         "-i", current_audio_path,
                         "-af", f"volume={self.volume}",  # 添加音量控制
                         "-f", "s16le",  # 输出为原始PCM数据
@@ -1262,10 +1263,11 @@ class FFmpegPipeStreamer:
                     )
 
                     # 从播放器读取数据并写入管道
+                    buffer_size = 8192  # 恢复原来的缓冲区大小
                     while self._running and self.playlist_manager.current_song == current_audio_path:
                         try:
-                            # 非阻塞读取，每次读取8KB数据
-                            data = self.ffmpeg_process_player.stdout.read(8192)
+                            # 非阻塞读取
+                            data = self.ffmpeg_process_player.stdout.read(buffer_size)
                             if not data:
                                 # 文件播放完毕
                                 break
@@ -1277,12 +1279,12 @@ class FFmpegPipeStreamer:
                                 with open(self.pipe_path, 'wb') as pipe:
                                     pipe.write(data)
 
+                            # 让出控制权给其他任务，但不要过长时间暂停
+                            await asyncio.sleep(0.005)  # 使用更短的暂停时间
+
                         except Exception as e:
                             print(f"播放出错: {e}")
                             break
-
-                        # 让出控制权给其他任务
-                        await asyncio.sleep(0.01)
 
                     # 清理播放器进程
                     if self.ffmpeg_process_player:
@@ -1566,16 +1568,37 @@ class FFmpegPipeStreamer:
 
         # 停止播放器进程
         if self.ffmpeg_process_player:
-            self.ffmpeg_process_player.terminate()
+            try:
+                self.ffmpeg_process_player.terminate()
+                # 添加等待进程关闭的超时机制
+                try:
+                    self.ffmpeg_process_player.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    self.ffmpeg_process_player.kill()
+            except Exception as e:
+                print(f"停止播放器进程时出错: {e}")
             self.ffmpeg_process_player = None
 
         # 停止推流进程
         if self.ffmpeg_process_streamer:
-            self.ffmpeg_process_streamer.terminate()
+            try:
+                self.ffmpeg_process_streamer.terminate()
+                # 添加等待进程关闭的超时机制
+                try:
+                    self.ffmpeg_process_streamer.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    self.ffmpeg_process_streamer.kill()
+            except Exception as e:
+                print(f"停止推流进程时出错: {e}")
             self.ffmpeg_process_streamer = None
 
-        # 清理管道
+        # 清空管道中的残留数据
         if platform.system() == 'Windows' and self._pipe:
+            try:
+                # 尝试清空管道中的数据
+                win32file.FlushFileBuffers(self._pipe)
+            except Exception as e:
+                print(f"清空管道缓冲区时出错: {e}")
             win32file.CloseHandle(self._pipe)
         elif os.path.exists(self.pipe_path):
             os.unlink(self.pipe_path)
