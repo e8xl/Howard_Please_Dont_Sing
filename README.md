@@ -10,7 +10,8 @@ About KookAPP Music BOT from [khl.py](https://github.com/TWT233/khl.py)
 因为之前用的[*KO-ON Bot*](https://github.com/Gunale0926/KO-ON-Bot)经常出现一些问题 但由于本人*技术力过低*
 无法查出问题原因  
 不如加上自己喜欢的功能再写一个点歌bot自用  
-非常建议各位 **仔细阅读[khl.py](https://github.com/TWT233/khl.py)的文档内容** 这可以帮助你很多
+非常建议各位 **仔细阅读[khl.py](https://github.com/TWT233/khl.py)的文档内容** 这可以帮助你很多  
+机器人可以播放网易云登录用户的云盘歌曲（直接使用song_id或者歌单id）用于播放平台上无法正常播放的歌曲
 ***
 
 ## 机器人频道内指令前缀
@@ -21,6 +22,12 @@ About KookAPP Music BOT from [khl.py](https://github.com/TWT233/khl.py)
 ```shell
 bot.command.update_prefixes(".")  # 修改引号内的内容为你的指令前缀 留空则无前缀 直接输入指令
 ```
+
+---
+
+### Windows平台 直接使用整合包
+
+[Release](https://github.com/e8xl/Howard_Please_Dont_Sing/releases) 下载整合包 发布页面有对应的教程
 
 ---
 
